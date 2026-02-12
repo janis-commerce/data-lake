@@ -54,6 +54,10 @@ describe('DataLakeSyncConsumer', () => {
 
 		sinon.stub(Settings, 'get').returns({ entities: [{ name: 'product' }] });
 
+		process.env.AWS_REGION = 'us-east-1';
+		process.env.AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || 'test';
+		process.env.AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || 'test';
+
 		process.env.DATA_LAKE_SYNC_ROLE_ARN = sqsQueueArn;
 		process.env.S3_DATA_LAKE_RAW_BUCKET = 'test-bucket';
 		process.env.JANIS_SERVICE_NAME = 'test-service';
@@ -61,7 +65,7 @@ describe('DataLakeSyncConsumer', () => {
 
 	afterEach(() => {
 		sinon.restore();
-		s3Mock.reset(); // limpia las llamadas grabadas del S3 mock
+		s3Mock.reset();
 		process.env = { ...originalEnv };
 	});
 
