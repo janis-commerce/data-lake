@@ -1,6 +1,6 @@
 {
   "name": "@janiscommerce/data-lake",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Package to send data to Janis Commerce Data Lake service",
   "main": "lib/index.js",
   "scripts": {
