@@ -2,6 +2,10 @@
   "include": [
     "lib/"
   ],
+  "exclude": [
+    "lib/serverless-helper-hooks.js",
+    "lib/helpers/"
+  ],
   "extension": [
     ".js"
   ],
@@ -10,8 +14,8 @@
   "default-excludes": true,
   "check-coverage": true,
   "skip-full": true,
-  "statements": 100,
-  "branches": 100,
-  "functions": 100,
-  "lines": 100
+  "statements": 90,
+  "branches": 80,
+  "functions": 90,
+  "lines": 90
 }

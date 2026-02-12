@@ -17,6 +17,8 @@ The package orchestrates **initial** and **incremental** syncs of entity data: a
 npm install @janiscommerce/data-lake
 ```
 
+> **Warning:** The consumer uses `returnType: 'cursor'` on the model `get()`. Your service must use **@janiscommerce/mongodb** version **3.14.0** or higher, where cursor support was added.
+
 ## Usage in a Janis service
 
 To enable Data Lake sync in a microservice, follow these steps.
@@ -108,10 +110,12 @@ Configure which entities are synced and how often (in minutes). Settings are rea
 	"dataLake": {
 		"entities": [{
 			"name": "order",
-			"frequency": 60
+			"frequency": 60,
+			"initialLoadDate": "2025-01-01 00:00:00"
 		}, {
 			"name": "product",
-			"frequency": 120
+			"frequency": 120,
+			"initialLoadDate": "2025-01-01 00:00:00"
 		}]
 	}
 }
@@ -119,13 +123,14 @@ Configure which entities are synced and how often (in minutes). Settings are rea
 
 **Entity options:**
 
-| Property    | Type   | Required | Description |
-|------------|--------|----------|-------------|
-| `name`     | string | Yes      | Entity name in **kebab-case**. Must match the model path: the package loads the model from `models/<name>.js` (e.g. `order` → `models/order.js`). This same value is sent in the payload as `entity`. |
-| `frequency`| number | No       | How often (in minutes) to run the incremental sync. Default: `60`. Used in the Schedule expression: `rate(<frequency> minutes)`. |
-| `fields`   | array  | No       | If set, only these fields are requested from the model in the consumer (reduces payload size and control what goes to the Data Lake). |
+| Property          | Type   | Required | Description |
+|-------------------|--------|----------|-------------|
+| `name`            | string | Yes      | Entity name in **kebab-case**. Must match the model path: the package loads the model from `models/<name>.js` (e.g. `order` → `models/order.js`). This same value is sent in the payload as `entity`. |
+| `frequency`       | number | No       | How often (in minutes) to run the incremental sync. Default: `60`. Used in the Schedule expression: `rate(<frequency> minutes)`. |
+| `initialLoadDate` | string | Yes      | Valid date string (e.g. `YYYY-MM-DD HH:mm:ss` or ISO). Used when the client has no `settings.<entity>.lastIncrementalLoadDate` for this entity (e.g. first run or new clients). Required so incremental sync can compute the date range. |
+| `fields`          | array  | No       | If set, only these fields are requested from the model in the consumer (reduces payload size and control what goes to the Data Lake). |
 
-**Example with `fields`:**
+**Example with `fields` and `initialLoadDate`:**
 
 ```json
 {
@@ -134,6 +139,7 @@ Configure which entities are synced and how often (in minutes). Settings are rea
 			{
 				"name": "order",
 				"frequency": 30,
+				"initialLoadDate": "2025-01-01 00:00:00",
 				"fields": ["id", "commerceId", "total", "status"]
 			}
 		]
@@ -142,6 +148,50 @@ Configure which entities are synced and how often (in minutes). Settings are rea
 ```
 
 **Important:** `dataLake.entities` is **required**. If it is missing, the hooks will throw at load time: `dataLake.entities is required in Settings file`. Each entity must have a model at `models/<name>.js` and the model must support `get()` with filters `dateCreatedFrom`/`dateCreatedTo` (initial) or `dateModifiedFrom`/`dateModifiedTo` (incremental) and `returnType: 'cursor'`.
+
+---
+
+### Manual execution: initial load
+
+To run an **initial load** (full export by date range) you must invoke the **DataLakeLoad** Lambda manually. The payload must include the entity and the start date; end date and client are optional (default: all active clients, up to today).
+
+**Payload:**
+
+| Field        | Type    | Required | Description |
+|--------------|---------|----------|-------------|
+| `entity`     | string  | Yes      | Entity name in kebab-case (e.g. `order`, `product`). |
+| `incremental`| boolean | Yes      | Use `false` for initial load. |
+| `from`       | string  | Yes      | Start date (valid date string, e.g. `YYYY-MM-DD HH:mm:ss` or ISO). |
+| `to`         | string  | No       | End date. Default: today end of day. |
+| `clientCode` | string  | No       | If set, only this client is synced; otherwise all active clients. |
+| `limit`      | number  | No       | Optional limit passed to the consumer. |
+| `maxSizeMB`  | number  | No       | Optional max size per file (MB) in the consumer. |
+
+**Example: all clients, from a given date to today**
+
+```json
+{
+  "body": {
+    "entity": "order",
+    "incremental": false,
+    "from": "2025-01-01 00:00:00"
+  }
+}
+```
+
+**Example: with end date and a single client**
+
+```json
+{
+  "body": {
+    "entity": "product",
+    "incremental": false,
+    "from": "2025-01-01 00:00:00",
+    "to": "2025-06-30 23:59:59",
+    "clientCode": "my-client-code"
+  }
+}
+```
 
 ---
 
