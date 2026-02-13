@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-02-13
+### Fixed
+- Added missing permissions to put objects in S3
+
 ## [1.0.1] - 2026-02-12
 ### Fixed
 - Fixed lambda function passing the environment variable of the sqs queue url
