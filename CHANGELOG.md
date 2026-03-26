@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-03-26
+### Added
+- Incremental partitioning: microservices can emit multiple sync messages per client so each consumer run calls the model `get()` with the same date window plus entity-specific filters (via `additionalFilters`).
+- Entity setting `excludeFields` to omit fields from the consumer export
+
+### Fixed
+- Using `dateModified` sort order for incremental loads
+
 ## [1.0.2] - 2026-02-13
 ### Fixed
 - Added missing permissions to put objects in S3

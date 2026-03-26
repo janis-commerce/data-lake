@@ -1,3 +1,6 @@
+/* eslint-disable max-len */
+/* eslint-disable max-classes-per-file */
+
 'use strict';
 
 const assert = require('assert');
@@ -35,6 +38,8 @@ describe('DataLakeSyncConsumer', () => {
 	const originalEnv = { ...process.env };
 
 	const ProductModel = class extends Model {};
+	const OrderModel = class extends Model {};
+	const ReservationsModel = class extends Model {};
 
 	const createEvent = records => {
 		return {
@@ -52,7 +57,13 @@ describe('DataLakeSyncConsumer', () => {
 
 	beforeEach(() => {
 
-		sinon.stub(Settings, 'get').returns({ entities: [{ name: 'product' }] });
+		sinon.stub(Settings, 'get').returns({
+			entities: [
+				{ name: 'product', fields: ['id', 'name', 'price'] },
+				{ name: 'order', excludeFields: ['items'] },
+				{ name: 'reservations' }
+			]
+		});
 
 		process.env.AWS_REGION = 'us-east-1';
 		process.env.AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || 'test';
@@ -70,6 +81,50 @@ describe('DataLakeSyncConsumer', () => {
 	});
 
 	it('Should process message getting from entity and upload to S3 file when incremental is true', async () => {
+
+		sinon.stub(ModelFetcher, 'get').returns(OrderModel);
+
+		const fakeCursor = {
+			batchSize() { return this; },
+			stream() {
+				const r = new Readable({ objectMode: true });
+				r.push({ _id: { toString: () => '507f1f77bcf86cd799439011' }, code: 'product1' });
+				r.push(null);
+				return r;
+			}
+		};
+
+		sinon.stub(OrderModel.prototype, 'get').resolves(fakeCursor);
+
+		await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
+			entity: 'order',
+			incremental: true,
+			from: '2026-01-01 00:00:00',
+			to: '2026-01-02 23:59:59'
+		}]));
+
+		sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'order');
+
+		sinon.assert.calledOnceWithExactly(OrderModel.prototype.get, {
+			excludeFields: ['items'],
+			order: { dateModified: 'asc' },
+			filters: {
+				dateModifiedFrom: new Date('2026-01-01 00:00:00'),
+				dateModifiedTo: new Date('2026-01-02 23:59:59')
+			},
+			returnType: 'cursor'
+		});
+
+		sinon.assert.calledOnceWithExactly(Settings.get, 'dataLake');
+
+		const createCalls = s3Mock.calls(CreateMultipartUploadCommand);
+
+		assert.strictEqual(createCalls.length, 1);
+		assert.strictEqual(createCalls[0].args[0].input.Bucket, 'test-bucket');
+		assert.ok(createCalls[0].args[0].input.Key.startsWith('microservice=test-service/entity=order/load_type=incremental/client_code=defaultClient/'));
+	});
+
+	it('Should process message getting from entity and upload to S3 file when incremental is true with additional filters', async () => {
 
 		sinon.stub(ModelFetcher, 'get').returns(ProductModel);
 
@@ -89,16 +144,19 @@ describe('DataLakeSyncConsumer', () => {
 			entity: 'product',
 			incremental: true,
 			from: '2026-01-01 00:00:00',
-			to: '2026-01-02 23:59:59'
+			to: '2026-01-02 23:59:59',
+			additionalFilters: { category: 'electronics' }
 		}]));
 
 		sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'product');
 
 		sinon.assert.calledOnceWithExactly(ProductModel.prototype.get, {
-			order: { dateCreated: 'asc' },
+			fields: ['id', 'name', 'price'],
+			order: { dateModified: 'asc' },
 			filters: {
 				dateModifiedFrom: new Date('2026-01-01 00:00:00'),
-				dateModifiedTo: new Date('2026-01-02 23:59:59')
+				dateModifiedTo: new Date('2026-01-02 23:59:59'),
+				category: 'electronics'
 			},
 			returnType: 'cursor'
 		});
@@ -114,7 +172,7 @@ describe('DataLakeSyncConsumer', () => {
 
 	it('Should process message getting from entity and upload to S3 file when incremental is false (initial load)', async () => {
 
-		sinon.stub(ModelFetcher, 'get').returns(ProductModel);
+		sinon.stub(ModelFetcher, 'get').returns(ReservationsModel);
 
 		const fakeCursor = {
 			batchSize() { return this; },
@@ -126,18 +184,18 @@ describe('DataLakeSyncConsumer', () => {
 			}
 		};
 
-		sinon.stub(ProductModel.prototype, 'get').resolves(fakeCursor);
+		sinon.stub(ReservationsModel.prototype, 'get').resolves(fakeCursor);
 
 		await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
-			entity: 'product',
+			entity: 'reservations',
 			incremental: false,
 			from: '2026-01-01 00:00:00',
 			to: '2026-01-02 23:59:59'
 		}]));
 
-		sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'product');
+		sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'reservations');
 
-		sinon.assert.calledOnceWithExactly(ProductModel.prototype.get, {
+		sinon.assert.calledOnceWithExactly(ReservationsModel.prototype.get, {
 			order: { dateCreated: 'asc' },
 			filters: {
 				dateCreatedFrom: new Date('2026-01-01 00:00:00'),
@@ -152,6 +210,19 @@ describe('DataLakeSyncConsumer', () => {
 
 		assert.strictEqual(createCalls.length, 1);
 		assert.strictEqual(createCalls[0].args[0].input.Bucket, 'test-bucket');
-		assert.ok(createCalls[0].args[0].input.Key.startsWith('microservice=test-service/entity=product/load_type=initial/client_code=defaultClient/'));
+		assert.ok(createCalls[0].args[0].input.Key.startsWith('microservice=test-service/entity=reservations/load_type=initial/client_code=defaultClient/'));
+	});
+
+	it('Should not process when invalid message received', async () => {
+
+		sinon.spy(ModelFetcher, 'get');
+
+		await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
+			from: '2026-01-01 00:00:00',
+			to: '2026-01-02 23:59:59'
+		}]));
+
+		sinon.assert.notCalled(ModelFetcher.get);
+		sinon.assert.notCalled(Settings.get);
 	});
 });
