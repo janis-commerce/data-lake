@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-03-26
+### Added
+- Support for `filenamePrefix` in the sync message to prepend to the S3 object key
+
 ## [1.1.0] - 2026-03-26
 ### Added
 - Incremental partitioning: microservices can emit multiple sync messages per client so each consumer run calls the model `get()` with the same date window plus entity-specific filters (via `additionalFilters`).

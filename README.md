@@ -59,7 +59,7 @@ module.exports = helper({
 
 ### 2. Add the DataLakeLoad Lambda
 
-Create the Lambda handler that extends the package class. It must live at the path expected by the hooks: `**src/lambda/DataLakeLoad/index.js`**.
+Create the Lambda handler that extends the package class. It must live at the path expected by the hooks: **`src/lambda/DataLakeLoad/index.js`**.
 
 **File: `src/lambda/DataLakeLoad/index.js`**
 
@@ -73,32 +73,31 @@ module.exports.handler = (...args) => Handler.handle(DataLakeLoadFunction, ...ar
 
 ```
 
-**Payload:** The Lambda receives a payload with `entity`, `incremental`, and optionally `from`, `to`, `limit`, `maxSizeMB`. The schedules send only `{ incremental: true, entity: "<entity-kebab-case>" }`. For an **initial load** you must invoke the Lambda manually with `entity`, `incremental: false`, and `from` (and optionally `to`, `limit`, `maxSizeMB`).
+**Payload:** The Lambda receives a payload with `entity`, `incremental`, and optionally `from`, `to`, `limit`, `maxSizeMB`. The schedules send only `{ incremental: true, entity: "<entity-kebab-case>" }`. For an **initial load** you must invoke the Lambda manually with `entity`, `incremental: false`, and `from` (and optionally `to`, `limit`, `maxSizeMB`). Sync messages sent to SQS can also carry **`additionalFilters`** and **`filenamePrefix`** when you override `prepareIncrementalMessages` (see below).
 
 ### Partitioning incremental loads (optional)
 
-Some entities need **compound query filters** (for example, to match a MongoDB index) while still using the same incremental **date range** (`dateModifiedFrom` / `dateModifiedTo`). In that case the microservice can **split one incremental run into several SQS messages** by overriding `prepareIncrementalMessages` on `**DataLakeLoadFunction`**.
+Some entities need **compound query filters** (for example, to match a MongoDB index) while still using the same incremental **date range** (`dateModifiedFrom` / `dateModifiedTo`). In that case the microservice can **split one incremental run into several SQS messages** by overriding `prepareIncrementalMessages` on **`DataLakeLoadFunction`**.
 
 **Default behavior:** `prepareIncrementalMessages(clientCode, content)` returns `[{ content }]` — one queue message per client per scheduled incremental run.
 
-**Override:** Return an array of objects shaped like `{ content: { ... } }`, each `content` being a full sync payload. The **Data Lake Sync** consumer merges optional `**additionalFilters`** into the model `get()` filters together with the date-range filters.
+**Override:** Return an array of objects shaped like `{ content: { ... } }`, each `content` being a full sync payload. The **Data Lake Sync** consumer merges optional **`additionalFilters`** into the model `get()` filters together with the date-range filters.
 
-`**content` shape (incremental)** — usually you spread the incoming `content` and add fields per message:
-
+**`content` shape (incremental)** — usually you spread the incoming `content` and add fields per message:
 
 | Field                 | Type          | Description                                                                                                                       |
 | --------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `entity`              | string        | Entity in kebab-case (same as settings).                                                                                          |
 | `incremental`         | boolean       | `true` for incremental.                                                                                                           |
-| `from`                | Date | string | Start of range (provided by the base class; serializes to ISO when sent to SQS).                                                  |
-| `to`                  | Date | string | End of range.                                                                                                                     |
+| `from`                | Date or string | Start of range (provided by the base class; serializes to ISO when sent to SQS).                                                 |
+| `to`                  | Date or string | End of range.                                                                                                                     |
 | `additionalFilters`   | object        | **Optional.** Merged into the consumer’s `filters` (e.g. `{ warehouse: id }`). Keys must match what your model’s `get()` expects. |
+| `filenamePrefix`      | string        | **Optional.** Prepended to the S3 object file name (with a trailing `-`) so partitioned runs for the same window do not collide (e.g. `warehouse-123`). |
 | `limit` / `maxSizeMB` | number        | **Optional.** Passed through like manual invokes.                                                                                 |
 
+**Consumer:** See `DataLakeSyncConsumer` — it validates `additionalFilters` as an optional object and applies it alongside `dateModifiedFrom` / `dateModifiedTo` (incremental) or `dateCreatedFrom` / `dateCreatedTo` (initial). Optional `filenamePrefix` is applied to uploaded `.ndjson.gz` keys: `…/<prefix>-<from>-<pushedAt>-<part>.ndjson.gz` (omit `filenamePrefix` for the default `…/<from>-<pushedAt>-<part>.ndjson.gz`).
 
-**Consumer:** See `DataLakeSyncConsumer` — it validates `additionalFilters` as an optional object and applies it alongside `dateModifiedFrom` / `dateModifiedTo` (incremental) or `dateCreatedFrom` / `dateCreatedTo` (initial).
-
-**Client watermark:** After a successful publish, the base class updates `**settings.<entity>.lastIncrementalLoadDate`** to `to` for that client. If you emit **multiple** messages from `prepareIncrementalMessages`, they are published in **one** `publishEvents` batch for that client; the watermark advances only when that batch succeeds (no partial update on failure).
+**Client watermark:** After a successful publish, the base class updates **`settings.<entity>.lastIncrementalLoadDate`** to `to` for that client. If you emit **multiple** messages from `prepareIncrementalMessages`, they are published in **one** `publishEvents` batch for that client; the watermark advances only when that batch succeeds (no partial update on failure).
 
 **Initial load:** Partitioning is only documented here for **incremental** flows. Initial load still uses the built-in per-day messages from `sendInitialLoadMessages` unless you extend that path separately.
 
@@ -133,7 +132,8 @@ class WMSDataLakeLoadFunction extends DataLakeLoadFunction {
 				messages.push({
 					content: {
 						...content,
-						additionalFilters: { warehouse: id }
+						additionalFilters: { warehouse: id },
+						filenamePrefix: `warehouse-${id}`
 					}
 				});
 			});
@@ -151,7 +151,7 @@ module.exports.handler = (...args) => Handler.handle(WMSDataLakeLoadFunction, ..
 
 ### 3. Add the Data Lake Sync consumer
 
-Create the SQS consumer file at the path expected by the hooks: `**src/sqs-consumer/data-lake-sync-consumer.js**`.
+Create the SQS consumer file at the path expected by the hooks: **`src/sqs-consumer/data-lake-sync-consumer.js`**.
 
 **File: `src/sqs-consumer/data-lake-sync-consumer.js`**
 
@@ -165,7 +165,7 @@ module.exports.handler = event => SQSHandler.handle(DataLakeSyncConsumer, event)
 
 ```
 
-This re-exports the package consumer handler. The consumer reads messages from the Data Lake sync queue, loads data from your model (by `entity` and date range), and uploads NDJSON.gz to S3.
+This re-exports the package consumer handler. The consumer reads messages from the Data Lake sync queue, loads data from your model (by `entity` and date range, plus optional `additionalFilters`), and uploads NDJSON.gz to S3. Optional **`filenamePrefix`** on the message body changes the uploaded object key so parallel or split runs stay distinguishable in the raw bucket.
 
 **Options:** The consumer uses `IterativeSQSConsumer` (one record per invocation when `batchSize: 1`).
 
@@ -240,6 +240,7 @@ To run an **initial load** (full export by date range) you must invoke the **Dat
 | `from`              | string  | Yes      | Start date (valid date string, e.g. `YYYY-MM-DD HH:mm:ss` or ISO).                                                                                    | `1.0.0` |
 | `to`                | string  | No       | End date. Default: today end of day.                                                                                                                  | `1.0.0` |
 | `additionalFilters` | object  | No       | Optional additional filters to be merged into the consumer’s `filters` (e.g. `{ warehouse: id }`). Keys must match what your model’s `get()` expects. | `1.1.0` |
+| `filenamePrefix`    | string  | No       | Optional prefix for the S3 file name segment (before `from`-`pushedAt`-part). Use when several exports share the same date window.                     | `1.2.0` |
 | `clientCode`        | string  | No       | If set, only this client is synced; otherwise all active clients.                                                                                     | `1.0.0` |
 | `limit`             | number  | No       | Optional limit passed to the consumer.                                                                                                                | `1.0.0` |
 | `maxSizeMB`         | number  | No       | Optional max size per file (MB) in the consumer.                                                                                                      | `1.0.0` |
@@ -275,6 +276,6 @@ To run an **initial load** (full export by date range) you must invoke the **Dat
 
 ## Environment variables
 
-- `**DATA_LAKE_SYNC_SQS_QUEUE_URL**` – Set by the hooks (SQS queue URL for the sync queue). The DataLakeLoad Lambda publishes messages here.
-- `**S3_DATA_LAKE_RAW_BUCKET**` – Set by the hooks on the consumer Lambda (e.g. `janis-data-lake-service-raw-${stage}`). The consumer uploads NDJSON.gz files here.
+- **`DATA_LAKE_SYNC_SQS_QUEUE_URL`** – Set by the hooks (SQS queue URL for the sync queue). The DataLakeLoad Lambda publishes messages here.
+- **`S3_DATA_LAKE_RAW_BUCKET`** – Set by the hooks on the consumer Lambda (e.g. `janis-data-lake-service-raw-${stage}`). The consumer uploads NDJSON.gz files here.
 
