@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-03-30
+### Fixed
+- Fixed Schedule name in Serverless resource
+
 ## [1.2.2] - 2026-03-26
 ### Fixed
 - Fixed Schedule and ScheduleGroup name to include the service name with serverless variables
