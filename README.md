@@ -75,6 +75,8 @@ module.exports.handler = (...args) => Handler.handle(DataLakeLoadFunction, ...ar
 
 **Payload:** The Lambda receives a payload with `entity`, `incremental`, and optionally `from`, `to`, `limit`, `maxSizeMB`. The schedules send only `{ incremental: true, entity: "<entity-kebab-case>" }`. For an **initial load** you must invoke the Lambda manually with `entity`, `incremental: false`, and `from` (and optionally `to`, `limit`, `maxSizeMB`). Sync messages sent to SQS can also carry **`additionalFilters`** and **`filenamePrefix`** when you override `prepareIncrementalMessages` (see below).
 
+**Performance:** The Lambda reuses a single `SqsEmitter` instance across all clients in a single invocation, avoiding file descriptor exhaustion (`EMFILE` errors) when processing hundreds or thousands of clients. Initial load messages are prepared once and reused for all clients.
+
 ### Partitioning incremental loads (optional)
 
 Some entities need **compound query filters** (for example, to match a MongoDB index) while still using the same incremental **date range** (`dateModifiedFrom` / `dateModifiedTo`). In that case the microservice can **split one incremental run into several SQS messages** by overriding `prepareIncrementalMessages` on **`DataLakeLoadFunction`**.

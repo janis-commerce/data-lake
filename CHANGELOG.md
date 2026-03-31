@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-03-31
+### Fixed
+- Fixed file descriptor leak (`EMFILE`) in DataLakeLoad Lambda by reusing a single `SqsEmitter` instance across all clients instead of creating one per batch
+
+### Changed
+- Optimized initial load message preparation: messages are now built once and reused across all clients instead of being rebuilt for each client
+
 ## [1.2.3] - 2026-03-30
 ### Fixed
 - Fixed Schedule name in Serverless resource
