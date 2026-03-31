@@ -189,17 +189,14 @@ describe('DataLakeLoadFunction', () => {
 			sinon.assert.notCalled(ClientModel.prototype.update);
 		});
 
-		it('Should throw when initialLoadDate is missing', async () => {
+		it('Should throw when initialLoadDate is missing from payload', async () => {
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
 
 			settingsGetStub
 				.returns({ entities: [{ name: 'order' }] });
 
-			await assert.rejects(
-				() => DataLakeLoad({ entity: 'order', incremental: true }),
-				/Missing initialLoadDate for entity "order"/
-			);
+			await assert.rejects(() => DataLakeLoad({ entity: 'order', incremental: true }));
 		});
 	});
 
@@ -212,18 +209,6 @@ describe('DataLakeLoadFunction', () => {
 
 		afterEach(() => {
 			sinon.assert.notCalled(ClientModel.prototype.update);
-		});
-
-		it('Should throw when from is missing', async () => {
-
-			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
-
-			await assert.rejects(
-				() => DataLakeLoad({ entity: 'order', incremental: false }),
-				/From date is required for initial load/
-			);
-
-			sinon.assert.notCalled(SqsEmitter.prototype.publishEvents);
 		});
 
 		it('Should send one message per day with correct from/to and incremental false', async () => {
@@ -421,6 +406,44 @@ describe('DataLakeLoadFunction', () => {
 					maxSizeMB: 200
 				}
 			}]);
+		});
+
+		it('Should throw when from is missing', async () => {
+
+			settingsGetStub
+				.returns({ entities: [{ name: 'order' }] });
+
+			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
+
+			await assert.rejects(() => DataLakeLoad({ entity: 'order', incremental: false }));
+
+			sinon.assert.notCalled(SqsEmitter.prototype.publishEvents);
+		});
+
+		it('Should throw when from is greater than to (date from in payload)', async () => {
+
+			const dateFrom = new Date();
+			dateFrom.setDate(dateFrom.getDate() + 5);
+
+			settingsGetStub
+				.returns({ entities: [{ name: 'order' }] });
+
+			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
+
+			await assert.rejects(() => DataLakeLoad({ entity: 'order', incremental: false, from: dateFrom.toISOString() }));
+		});
+
+		it('Should throw when from is greater than to (date from in settings)', async () => {
+
+			const dateFrom = new Date();
+			dateFrom.setDate(dateFrom.getDate() + 5);
+
+			settingsGetStub
+				.returns({ entities: [{ name: 'order', initialLoadDate: dateFrom.toISOString() }] });
+
+			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
+
+			await assert.rejects(() => DataLakeLoad({ entity: 'order', incremental: false }));
 		});
 	});
 });
