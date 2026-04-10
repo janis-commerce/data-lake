@@ -61,7 +61,7 @@ describe('DataLakeSyncConsumer', () => {
 			entities: [
 				{ name: 'product', fields: ['id', 'name', 'price'] },
 				{ name: 'order', excludeFields: ['items'] },
-				{ name: 'reservations' }
+				{ name: 'reservations', readPreference: 'secondaryPreferred' }
 			]
 		});
 
@@ -112,7 +112,8 @@ describe('DataLakeSyncConsumer', () => {
 				dateModifiedFrom: new Date('2026-01-01 00:00:00'),
 				dateModifiedTo: new Date('2026-01-02 23:59:59')
 			},
-			returnType: 'cursor'
+			returnType: 'cursor',
+			readPreference: 'secondary'
 		});
 
 		sinon.assert.calledOnceWithExactly(Settings.get, 'dataLake');
@@ -158,7 +159,8 @@ describe('DataLakeSyncConsumer', () => {
 				dateModifiedTo: new Date('2026-01-02 23:59:59'),
 				category: 'electronics'
 			},
-			returnType: 'cursor'
+			returnType: 'cursor',
+			readPreference: 'secondary'
 		});
 
 		sinon.assert.calledOnceWithExactly(Settings.get, 'dataLake');
@@ -201,7 +203,8 @@ describe('DataLakeSyncConsumer', () => {
 				dateCreatedFrom: new Date('2026-01-01 00:00:00'),
 				dateCreatedTo: new Date('2026-01-02 23:59:59')
 			},
-			returnType: 'cursor'
+			returnType: 'cursor',
+			readPreference: 'secondaryPreferred'
 		});
 
 		sinon.assert.calledOnceWithExactly(Settings.get, 'dataLake');

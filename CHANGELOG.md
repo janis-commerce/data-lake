@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-04-10
+### Added
+- Entity setting `readPreference` to control the MongoDB read preference used in the consumer model `get()` call. Default: `'secondary'`. Requires **@janiscommerce/mongodb 3.17.0** or higher.
+
 ## [1.3.0] - 2026-03-31
 ### Fixed
 - Fixed file descriptor leak (`EMFILE`) in DataLakeLoad Lambda by reusing a single `SqsEmitter` instance across all clients instead of creating one per batch

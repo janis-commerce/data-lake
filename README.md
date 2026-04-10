@@ -205,6 +205,7 @@ Configure which entities are synced and how often (in minutes). Settings are rea
 | `initialLoadDate` | string | Yes      | Valid date string (e.g. `YYYY-MM-DD HH:mm:ss` or ISO). Used when the client has no `settings.<entity>.lastIncrementalLoadDate` for this entity (e.g. first run or new clients). Required so incremental sync can compute the date range. | `1.0.0` |
 | `fields`          | array  | No       | If set, only these fields are requested from the model in the consumer (reduces payload size and control what goes to the Data Lake).                                                                                                    | `1.0.0` |
 | `excludeFields`   | array  | No       | If set, these fields are excluded from the model in the consumer (reduces payload size and control what goes to the Data Lake).                                                                                                          | `1.1.0` |
+| `readPreference`  | string | No       | MongoDB read preference passed to the model `get()` call. Default: `'secondary'`. Requires **@janiscommerce/mongodb 3.17.0** or higher.                                                                                                 | `1.4.0` |
 
 
 **Example with `fields`, `excludeFields` and `initialLoadDate`:**
