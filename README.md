@@ -206,6 +206,7 @@ Configure which entities are synced and how often (in minutes). Settings are rea
 | `fields`          | array  | No       | If set, only these fields are requested from the model in the consumer (reduces payload size and control what goes to the Data Lake).                                                                                                    | `1.0.0` |
 | `excludeFields`   | array  | No       | If set, these fields are excluded from the model in the consumer (reduces payload size and control what goes to the Data Lake).                                                                                                          | `1.1.0` |
 | `readPreference`  | string | No       | MongoDB read preference passed to the model `get()` call. Default: `'secondary'`. Requires **@janiscommerce/mongodb 3.17.0** or higher.                                                                                                 | `1.4.0` |
+| `hint`            | object \| string | No       | MongoDB index hint passed to the model `get()` call. Can be an index spec object (e.g. `{ dateModified: 1, warehouse: 1 }`) or the index name as a string (e.g. `"dateModified_1_warehouse_1"`).                               | `1.5.0` |
 
 
 **Example with `fields`, `excludeFields` and `initialLoadDate`:**

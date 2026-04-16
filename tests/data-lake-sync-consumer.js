@@ -40,6 +40,8 @@ describe('DataLakeSyncConsumer', () => {
 	const ProductModel = class extends Model {};
 	const OrderModel = class extends Model {};
 	const ReservationsModel = class extends Model {};
+	const StockModel = class extends Model {};
+	const PickingModel = class extends Model {};
 
 	const createEvent = records => {
 		return {
@@ -61,7 +63,9 @@ describe('DataLakeSyncConsumer', () => {
 			entities: [
 				{ name: 'product', fields: ['id', 'name', 'price'] },
 				{ name: 'order', excludeFields: ['items'] },
-				{ name: 'reservations', readPreference: 'secondaryPreferred' }
+				{ name: 'reservations', readPreference: 'secondaryPreferred' },
+				{ name: 'stock', hint: { dateModified: 1, warehouse: 1 } },
+				{ name: 'picking', hint: 'dateModified_1_warehouse_1' }
 			]
 		});
 
@@ -214,6 +218,96 @@ describe('DataLakeSyncConsumer', () => {
 		assert.strictEqual(createCalls.length, 1);
 		assert.strictEqual(createCalls[0].args[0].input.Bucket, 'test-bucket');
 		assert.ok(createCalls[0].args[0].input.Key.startsWith('microservice=test-service/entity=reservations/load_type=initial/client_code=defaultClient/'));
+	});
+
+	it('Should pass hint as object to model get() when entity settings include hint as object', async () => {
+
+		sinon.stub(ModelFetcher, 'get').returns(StockModel);
+
+		const fakeCursor = {
+			batchSize() { return this; },
+			stream() {
+				const r = new Readable({ objectMode: true });
+				r.push({ _id: { toString: () => '507f1f77bcf86cd799439011' }, code: 'stock1' });
+				r.push(null);
+				return r;
+			}
+		};
+
+		sinon.stub(StockModel.prototype, 'get').resolves(fakeCursor);
+
+		await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
+			entity: 'stock',
+			incremental: true,
+			from: '2026-01-01 00:00:00',
+			to: '2026-01-02 23:59:59'
+		}]));
+
+		sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'stock');
+
+		sinon.assert.calledOnceWithExactly(StockModel.prototype.get, {
+			hint: { dateModified: 1, warehouse: 1 },
+			order: { dateModified: 'asc' },
+			filters: {
+				dateModifiedFrom: new Date('2026-01-01 00:00:00'),
+				dateModifiedTo: new Date('2026-01-02 23:59:59')
+			},
+			returnType: 'cursor',
+			readPreference: 'secondary'
+		});
+
+		sinon.assert.calledOnceWithExactly(Settings.get, 'dataLake');
+
+		const createCalls = s3Mock.calls(CreateMultipartUploadCommand);
+
+		assert.strictEqual(createCalls.length, 1);
+		assert.strictEqual(createCalls[0].args[0].input.Bucket, 'test-bucket');
+		assert.ok(createCalls[0].args[0].input.Key.startsWith('microservice=test-service/entity=stock/load_type=incremental/client_code=defaultClient/'));
+	});
+
+	it('Should pass hint as string to model get() when entity settings include hint as index name', async () => {
+
+		sinon.stub(ModelFetcher, 'get').returns(PickingModel);
+
+		const fakeCursor = {
+			batchSize() { return this; },
+			stream() {
+				const r = new Readable({ objectMode: true });
+				r.push({ _id: { toString: () => '507f1f77bcf86cd799439011' }, code: 'picking1' });
+				r.push(null);
+				return r;
+			}
+		};
+
+		sinon.stub(PickingModel.prototype, 'get').resolves(fakeCursor);
+
+		await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
+			entity: 'picking',
+			incremental: true,
+			from: '2026-01-01 00:00:00',
+			to: '2026-01-02 23:59:59'
+		}]));
+
+		sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'picking');
+
+		sinon.assert.calledOnceWithExactly(PickingModel.prototype.get, {
+			hint: 'dateModified_1_warehouse_1',
+			order: { dateModified: 'asc' },
+			filters: {
+				dateModifiedFrom: new Date('2026-01-01 00:00:00'),
+				dateModifiedTo: new Date('2026-01-02 23:59:59')
+			},
+			returnType: 'cursor',
+			readPreference: 'secondary'
+		});
+
+		sinon.assert.calledOnceWithExactly(Settings.get, 'dataLake');
+
+		const createCalls = s3Mock.calls(CreateMultipartUploadCommand);
+
+		assert.strictEqual(createCalls.length, 1);
+		assert.strictEqual(createCalls[0].args[0].input.Bucket, 'test-bucket');
+		assert.ok(createCalls[0].args[0].input.Key.startsWith('microservice=test-service/entity=picking/load_type=incremental/client_code=defaultClient/'));
 	});
 
 	it('Should not process when invalid message received', async () => {
