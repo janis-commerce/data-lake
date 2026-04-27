@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-04-27
+### Fixed
+- Added missing environment variable for DataLakeLoad SQS queue url
+
 ## [1.6.1] - 2026-04-27
 ### Fixed
 - Fixed client settings `initialLoad.dateStart` and `initialLoad.dateEnd` dates
