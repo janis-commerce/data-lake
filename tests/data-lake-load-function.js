@@ -52,18 +52,18 @@ describe('DataLakeLoadFunction', () => {
 
 	describe('Incremental load', () => {
 
-		const initialLoadDate = '2025-01-01 00:00:00';
+		const dateFrom = '2025-01-01 00:00:00';
 
 		beforeEach(() => {
 			settingsGetStub
-				.returns({ entities: [{ name: 'order', initialLoadDate }] });
+				.returns({ entities: [{ name: 'order', initialLoad: { dateFrom } }] });
 		});
 
 		it('Should send message and update client when client has no lastIncrementalLoadDate for entity', async () => {
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
 
-			await DataLakeLoad({ entity: 'order', incremental: true });
+			await DataLakeLoad({ entity: 'order', mode: 'incremental' });
 
 			sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'client');
 			sinon.assert.calledOnceWithExactly(ClientModel.prototype.get, {
@@ -71,14 +71,14 @@ describe('DataLakeLoadFunction', () => {
 				filters: { status: 'active' }
 			});
 
-			const from = new Date(initialLoadDate);
-			const to = new Date(initialLoadDate);
+			const from = new Date(dateFrom);
+			const to = new Date(dateFrom);
 			to.setDate(to.getDate() + 1);
 
 			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
 				content: {
 					entity: 'order',
-					incremental: true,
+					mode: 'incremental',
 					from,
 					to
 				}
@@ -97,7 +97,7 @@ describe('DataLakeLoadFunction', () => {
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1', settings: { order: { lastIncrementalLoadDate } } }]);
 
-			await DataLakeLoad({ entity: 'order', incremental: true });
+			await DataLakeLoad({ entity: 'order', mode: 'incremental' });
 
 			sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'client');
 			sinon.assert.calledOnceWithExactly(ClientModel.prototype.get, {
@@ -112,7 +112,7 @@ describe('DataLakeLoadFunction', () => {
 			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
 				content: {
 					entity: 'order',
-					incremental: true,
+					mode: 'incremental',
 					from,
 					to
 				}
@@ -132,7 +132,7 @@ describe('DataLakeLoadFunction', () => {
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1', settings: { order: { lastIncrementalLoadDate } } }]);
 
-			await DataLakeLoad({ entity: 'order', incremental: true });
+			await DataLakeLoad({ entity: 'order', mode: 'incremental' });
 
 			sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'client');
 			sinon.assert.calledOnceWithExactly(ClientModel.prototype.get, {
@@ -146,7 +146,7 @@ describe('DataLakeLoadFunction', () => {
 			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
 				content: {
 					entity: 'order',
-					incremental: true,
+					mode: 'incremental',
 					from,
 					to
 				}
@@ -165,7 +165,7 @@ describe('DataLakeLoadFunction', () => {
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
 
-			await DataLakeLoad({ entity: 'order', incremental: true });
+			await DataLakeLoad({ entity: 'order', mode: 'incremental' });
 
 			sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'client');
 			sinon.assert.calledOnceWithExactly(ClientModel.prototype.get, {
@@ -173,14 +173,14 @@ describe('DataLakeLoadFunction', () => {
 				filters: { status: 'active' }
 			});
 
-			const from = new Date(initialLoadDate);
-			const to = new Date(initialLoadDate);
+			const from = new Date(dateFrom);
+			const to = new Date(dateFrom);
 			to.setDate(to.getDate() + 1);
 
 			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
 				content: {
 					entity: 'order',
-					incremental: true,
+					mode: 'incremental',
 					from,
 					to
 				}
@@ -189,14 +189,14 @@ describe('DataLakeLoadFunction', () => {
 			sinon.assert.notCalled(ClientModel.prototype.update);
 		});
 
-		it('Should throw when initialLoadDate is missing from payload', async () => {
+		it('Should throw when initialLoad.dateFrom is missing from payload', async () => {
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
 
 			settingsGetStub
 				.returns({ entities: [{ name: 'order' }] });
 
-			await assert.rejects(() => DataLakeLoad({ entity: 'order', incremental: true }));
+			await assert.rejects(() => DataLakeLoad({ entity: 'order', mode: 'incremental' }));
 		});
 	});
 
@@ -204,20 +204,19 @@ describe('DataLakeLoadFunction', () => {
 
 		beforeEach(() => {
 			settingsGetStub
-				.returns({ entities: [{ name: 'order', initialLoadDate: '2025-01-01 00:00:00' }] });
+				.returns({ entities: [{ name: 'order', initialLoad: { dateFrom: '2025-01-01 00:00:00' } }] });
 		});
 
 		afterEach(() => {
 			sinon.assert.notCalled(ClientModel.prototype.update);
 		});
 
-		it('Should send one message per day with correct from/to and incremental false', async () => {
+		it('Should send one message per day with correct from/to and mode initial', async () => {
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
 
 			await DataLakeLoad({
 				entity: 'order',
-				incremental: false,
 				from: '2026-01-01 00:00:00',
 				to: '2026-01-02 23:59:59'
 			});
@@ -236,16 +235,16 @@ describe('DataLakeLoadFunction', () => {
 			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
 				content: {
 					entity: 'order',
+					mode: 'initial',
 					from: day1Start.toISOString(),
-					to: day1End.toISOString(),
-					incremental: false
+					to: day1End.toISOString()
 				}
 			}, {
 				content: {
 					entity: 'order',
+					mode: 'initial',
 					from: day2Start.toISOString(),
-					to: day2End.toISOString(),
-					incremental: false
+					to: day2End.toISOString()
 				}
 			}]);
 		});
@@ -257,7 +256,6 @@ describe('DataLakeLoadFunction', () => {
 			await DataLakeLoad({
 				clientCode: 'customClient',
 				entity: 'order',
-				incremental: false,
 				from: '2026-01-01 00:00:00',
 				to: '2026-01-02 23:59:59'
 			});
@@ -276,21 +274,21 @@ describe('DataLakeLoadFunction', () => {
 			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
 				content: {
 					entity: 'order',
+					mode: 'initial',
 					from: day1Start.toISOString(),
-					to: day1End.toISOString(),
-					incremental: false
+					to: day1End.toISOString()
 				}
 			}, {
 				content: {
 					entity: 'order',
+					mode: 'initial',
 					from: day2Start.toISOString(),
-					to: day2End.toISOString(),
-					incremental: false
+					to: day2End.toISOString()
 				}
 			}]);
 		});
 
-		it('Should send one message per day with correct from unit now when to is not provided', async () => {
+		it('Should send one message per day with correct from until now when to is not provided', async () => {
 
 			const from = new Date(fakeCurrentDate);
 			from.setDate(from.getDate() - 3);
@@ -299,7 +297,6 @@ describe('DataLakeLoadFunction', () => {
 
 			await DataLakeLoad({
 				entity: 'order',
-				incremental: false,
 				from: from.toISOString()
 			});
 
@@ -321,9 +318,9 @@ describe('DataLakeLoadFunction', () => {
 				expectedMessages.push({
 					content: {
 						entity: 'order',
+						mode: 'initial',
 						from: dayStart.toISOString(),
-						to: dayEnd.toISOString(),
-						incremental: false
+						to: dayEnd.toISOString()
 					}
 				});
 
@@ -339,7 +336,6 @@ describe('DataLakeLoadFunction', () => {
 
 			await DataLakeLoad({
 				entity: 'order',
-				incremental: false,
 				from: '2026-01-01 00:00:00',
 				to: '2026-02-20 23:59:59'
 			});
@@ -354,9 +350,9 @@ describe('DataLakeLoadFunction', () => {
 				expectedFirstBatch.push({
 					content: {
 						entity: 'order',
+						mode: 'initial',
 						from: dayStart.toISOString(),
-						to: dayEnd.toISOString(),
-						incremental: false
+						to: dayEnd.toISOString()
 					}
 				});
 				currentDate.setDate(currentDate.getDate() + 1);
@@ -369,43 +365,15 @@ describe('DataLakeLoadFunction', () => {
 			const expectedSecondBatch = [{
 				content: {
 					entity: 'order',
+					mode: 'initial',
 					from: day51Start.toISOString(),
-					to: day51End.toISOString(),
-					incremental: false
+					to: day51End.toISOString()
 				}
 			}];
 
 			sinon.assert.calledTwice(SqsEmitter.prototype.publishEvents);
 			sinon.assert.calledWithExactly(SqsEmitter.prototype.publishEvents.firstCall, QUEUE_URL, expectedFirstBatch);
 			sinon.assert.calledWithExactly(SqsEmitter.prototype.publishEvents.secondCall, QUEUE_URL, expectedSecondBatch);
-		});
-
-		it('Should send messages with optional limit and maxSizeMB when in payload', async () => {
-
-			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
-
-			await DataLakeLoad({
-				entity: 'order',
-				incremental: false,
-				from: '2026-01-01 00:00:00',
-				to: '2026-01-01 23:59:59',
-				limit: 500,
-				maxSizeMB: 200
-			});
-
-			const dayStart = new Date(2026, 0, 1, 0, 0, 0, 0);
-			const dayEnd = new Date(2026, 0, 1, 23, 59, 59, 999);
-
-			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
-				content: {
-					entity: 'order',
-					from: dayStart.toISOString(),
-					to: dayEnd.toISOString(),
-					incremental: false,
-					limit: 500,
-					maxSizeMB: 200
-				}
-			}]);
 		});
 
 		it('Should throw when from is missing', async () => {
@@ -415,7 +383,7 @@ describe('DataLakeLoadFunction', () => {
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
 
-			await assert.rejects(() => DataLakeLoad({ entity: 'order', incremental: false }));
+			await assert.rejects(() => DataLakeLoad({ entity: 'order' }));
 
 			sinon.assert.notCalled(SqsEmitter.prototype.publishEvents);
 		});
@@ -430,7 +398,7 @@ describe('DataLakeLoadFunction', () => {
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
 
-			await assert.rejects(() => DataLakeLoad({ entity: 'order', incremental: false, from: dateFrom.toISOString() }));
+			await assert.rejects(() => DataLakeLoad({ entity: 'order', from: dateFrom.toISOString() }));
 		});
 
 		it('Should throw when from is greater than to (date from in settings)', async () => {
@@ -439,11 +407,64 @@ describe('DataLakeLoadFunction', () => {
 			dateFrom.setDate(dateFrom.getDate() + 5);
 
 			settingsGetStub
-				.returns({ entities: [{ name: 'order', initialLoadDate: dateFrom.toISOString() }] });
+				.returns({ entities: [{ name: 'order', initialLoad: { dateFrom: dateFrom.toISOString() } }] });
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
 
-			await assert.rejects(() => DataLakeLoad({ entity: 'order', incremental: false }));
+			await assert.rejects(() => DataLakeLoad({ entity: 'order' }));
+		});
+	});
+
+	describe('Initial load by id', () => {
+
+		beforeEach(() => {
+			settingsGetStub.returns({ entities: [{ name: 'order', initialLoad: { byId: true } }] });
+		});
+
+		afterEach(() => {
+			sinon.assert.notCalled(ClientModel.prototype.update);
+		});
+
+		it('Should send a single message with mode initialById and no dates', async () => {
+
+			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
+
+			await DataLakeLoad({ entity: 'order' });
+
+			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
+				content: {
+					entity: 'order',
+					mode: 'initialById'
+				}
+			}]);
+		});
+
+		it('Should send a single message with mode initialById for multiple clients', async () => {
+
+			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }, { code: 'client2' }]);
+
+			await DataLakeLoad({ entity: 'order' });
+
+			sinon.assert.calledTwice(SqsEmitter.prototype.publishEvents);
+			sinon.assert.calledWithExactly(SqsEmitter.prototype.publishEvents.firstCall, QUEUE_URL, [{
+				content: {
+					entity: 'order',
+					mode: 'initialById'
+				}
+			}]);
+			sinon.assert.calledWithExactly(SqsEmitter.prototype.publishEvents.secondCall, QUEUE_URL, [{
+				content: {
+					entity: 'order',
+					mode: 'initialById'
+				}
+			}]);
+		});
+
+		it('Should not require from/to dates and not throw', async () => {
+
+			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
+
+			await assert.doesNotReject(() => DataLakeLoad({ entity: 'order' }));
 		});
 	});
 });

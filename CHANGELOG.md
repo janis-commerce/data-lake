@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+- Entity setting `initialLoad.byId: true` to enable initial load paginated by `_id` instead of `dateCreated`, for entities with large collections where `dateCreated` is not indexed
+- Entity settings `initialLoad.batchSize` (default `10000`) and `initialLoad.executionLimit` (default `100000`) to control cursor batch size and page size for the `initialLoad.byId` mode
+- Consumer auto-paginates `initialLoad.byId` runs: when a page reaches `initialLoad.executionLimit` docs, it re-queues a new SQS message with `lastId` to continue from where it left off
+- Entity setting `maxSizeMB` (default `500`) to control the maximum size in MB of the S3 file for the initial load by `dateCreated` mode
+
 ## [1.5.0] - 2026-04-16
 ### Added
 - Entity setting `hint` to pass a MongoDB index hint to the consumer model `get()` call

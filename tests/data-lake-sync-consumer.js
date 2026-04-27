@@ -9,6 +9,7 @@ const sinon = require('sinon');
 const { Readable } = require('stream');
 
 const { SQSHandler } = require('@janiscommerce/sqs-consumer');
+const { SqsEmitter } = require('@janiscommerce/sqs-emitter');
 const Model = require('@janiscommerce/model');
 const Settings = require('@janiscommerce/settings');
 
@@ -35,7 +36,12 @@ describe('DataLakeSyncConsumer', () => {
 
 	const sqsQueueArn = 'arn:aws:sqs:us-east-1:000000000000:DataLakeSyncQueue';
 
+	const QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/123/data-lake-sync';
+
 	const originalEnv = { ...process.env };
+
+	let settingsGetStub;
+	let publishEventsStub;
 
 	const ProductModel = class extends Model {};
 	const OrderModel = class extends Model {};
@@ -59,7 +65,7 @@ describe('DataLakeSyncConsumer', () => {
 
 	beforeEach(() => {
 
-		sinon.stub(Settings, 'get').returns({
+		settingsGetStub = sinon.stub(Settings, 'get').returns({
 			entities: [
 				{ name: 'product', fields: ['id', 'name', 'price'] },
 				{ name: 'order', excludeFields: ['items'] },
@@ -68,6 +74,8 @@ describe('DataLakeSyncConsumer', () => {
 				{ name: 'picking', hint: 'dateModified_1_warehouse_1' }
 			]
 		});
+
+		publishEventsStub = sinon.stub(SqsEmitter.prototype, 'publishEvents').resolves({ failedCount: 0 });
 
 		process.env.AWS_REGION = 'us-east-1';
 		process.env.AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || 'test';
@@ -84,7 +92,7 @@ describe('DataLakeSyncConsumer', () => {
 		process.env = { ...originalEnv };
 	});
 
-	it('Should process message getting from entity and upload to S3 file when incremental is true', async () => {
+	it('Should process message getting from entity and upload to S3 file when mode is incremental', async () => {
 
 		sinon.stub(ModelFetcher, 'get').returns(OrderModel);
 
@@ -102,7 +110,7 @@ describe('DataLakeSyncConsumer', () => {
 
 		await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
 			entity: 'order',
-			incremental: true,
+			mode: 'incremental',
 			from: '2026-01-01 00:00:00',
 			to: '2026-01-02 23:59:59'
 		}]));
@@ -129,7 +137,7 @@ describe('DataLakeSyncConsumer', () => {
 		assert.ok(createCalls[0].args[0].input.Key.startsWith('microservice=test-service/entity=order/load_type=incremental/client_code=defaultClient/'));
 	});
 
-	it('Should process message getting from entity and upload to S3 file when incremental is true with additional filters', async () => {
+	it('Should process message with additional filters when mode is incremental', async () => {
 
 		sinon.stub(ModelFetcher, 'get').returns(ProductModel);
 
@@ -147,7 +155,7 @@ describe('DataLakeSyncConsumer', () => {
 
 		await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
 			entity: 'product',
-			incremental: true,
+			mode: 'incremental',
 			from: '2026-01-01 00:00:00',
 			to: '2026-01-02 23:59:59',
 			additionalFilters: { category: 'electronics' }
@@ -176,7 +184,7 @@ describe('DataLakeSyncConsumer', () => {
 		assert.ok(createCalls[0].args[0].input.Key.startsWith('microservice=test-service/entity=product/load_type=incremental/client_code=defaultClient/'));
 	});
 
-	it('Should process message getting from entity and upload to S3 file when incremental is false (initial load)', async () => {
+	it('Should process message when mode is initial (date range)', async () => {
 
 		sinon.stub(ModelFetcher, 'get').returns(ReservationsModel);
 
@@ -194,7 +202,7 @@ describe('DataLakeSyncConsumer', () => {
 
 		await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
 			entity: 'reservations',
-			incremental: false,
+			mode: 'initial',
 			from: '2026-01-01 00:00:00',
 			to: '2026-01-02 23:59:59'
 		}]));
@@ -238,7 +246,7 @@ describe('DataLakeSyncConsumer', () => {
 
 		await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
 			entity: 'stock',
-			incremental: true,
+			mode: 'incremental',
 			from: '2026-01-01 00:00:00',
 			to: '2026-01-02 23:59:59'
 		}]));
@@ -283,7 +291,7 @@ describe('DataLakeSyncConsumer', () => {
 
 		await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
 			entity: 'picking',
-			incremental: true,
+			mode: 'incremental',
 			from: '2026-01-01 00:00:00',
 			to: '2026-01-02 23:59:59'
 		}]));
@@ -321,5 +329,252 @@ describe('DataLakeSyncConsumer', () => {
 
 		sinon.assert.notCalled(ModelFetcher.get);
 		sinon.assert.notCalled(Settings.get);
+	});
+
+	describe('Initial load by id', () => {
+
+		const ShipmentModel = class extends Model {};
+		const ClientModel = class extends Model {};
+
+		beforeEach(() => {
+			settingsGetStub.returns({
+				entities: [
+					{ name: 'shipment', initialLoad: { byId: true, batchSize: 2, executionLimit: 4 } }
+				]
+			});
+			process.env.DATA_LAKE_SYNC_SQS_QUEUE_URL = QUEUE_URL;
+
+			const modelFetcherStub = sinon.stub(ModelFetcher, 'get');
+			modelFetcherStub.withArgs('shipment').returns(ShipmentModel);
+			modelFetcherStub.withArgs('client').returns(ClientModel);
+
+			sinon.stub(ClientModel.prototype, 'update').resolves();
+		});
+
+		it('Should process first execution: single batch smaller than batchSize sets dateStart, dateEnd and lastId', async () => {
+
+			sinon.stub(ShipmentModel.prototype, 'get').resolves([{ id: 'id1', code: 'shipment1' }]);
+
+			const before = new Date();
+
+			await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
+				entity: 'shipment',
+				mode: 'initialById'
+			}]));
+
+			const after = new Date();
+
+			sinon.assert.calledOnceWithExactly(ShipmentModel.prototype.get, {
+				order: { id: 'asc' },
+				limit: 2,
+				readPreference: 'secondary'
+			});
+
+			sinon.assert.notCalled(publishEventsStub);
+
+			const [[updateValues, updateFilter]] = ClientModel.prototype.update.args;
+			assert.deepStrictEqual(updateFilter, { code: clientCode });
+			assert.deepStrictEqual(updateValues.$inc, { 'settings.shipment.initialLoad.totalItems': 1 });
+			assert.strictEqual(updateValues['settings.shipment.initialLoad.lastId'], 'id1');
+			assert.ok(updateValues['settings.shipment.initialLoad.dateStart'] >= before);
+			assert.ok(updateValues['settings.shipment.initialLoad.dateStart'] <= after);
+			assert.ok(updateValues['settings.shipment.initialLoad.dateEnd'] >= before);
+			assert.ok(updateValues['settings.shipment.initialLoad.dateEnd'] <= after);
+		});
+
+		it('Should process continuation: last batch smaller than batchSize sets dateEnd and lastId without dateStart', async () => {
+
+			sinon.stub(ShipmentModel.prototype, 'get').resolves([{ id: 'id99', code: 'shipment99' }]);
+
+			await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
+				entity: 'shipment',
+				mode: 'initialById',
+				lastId: 'prevId'
+			}]));
+
+			sinon.assert.calledOnceWithExactly(ShipmentModel.prototype.get, {
+				order: { id: 'asc' },
+				filters: { id: { type: 'greater', value: 'prevId' } },
+				limit: 2,
+				readPreference: 'secondary'
+			});
+
+			sinon.assert.notCalled(publishEventsStub);
+
+			const [[updateValues, updateFilter]] = ClientModel.prototype.update.args;
+			assert.deepStrictEqual(updateFilter, { code: clientCode });
+			assert.deepStrictEqual(updateValues.$inc, { 'settings.shipment.initialLoad.totalItems': 1 });
+			assert.strictEqual(updateValues['settings.shipment.initialLoad.lastId'], 'id99');
+			assert.ok(updateValues['settings.shipment.initialLoad.dateEnd']);
+			assert.strictEqual(updateValues['settings.shipment.initialLoad.dateStart'], undefined);
+		});
+
+		it('Should re-queue when executionLimit is reached on first execution: sets dateStart and lastId but not dateEnd', async () => {
+
+			sinon.stub(ShipmentModel.prototype, 'get')
+				.onFirstCall()
+				.resolves([{ id: 'id1', code: 'shipment1' }, { id: 'id2', code: 'shipment2' }])
+				.onSecondCall()
+				.resolves([{ id: 'id3', code: 'shipment3' }, { id: 'id4', code: 'shipment4' }]);
+
+			await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
+				entity: 'shipment',
+				mode: 'initialById'
+			}]));
+
+			assert.strictEqual(ShipmentModel.prototype.get.callCount, 2);
+
+			sinon.assert.calledWithExactly(ShipmentModel.prototype.get.getCall(0), {
+				order: { id: 'asc' },
+				limit: 2,
+				readPreference: 'secondary'
+			});
+
+			sinon.assert.calledWithExactly(ShipmentModel.prototype.get.getCall(1), {
+				order: { id: 'asc' },
+				filters: { id: { type: 'greater', value: 'id2' } },
+				limit: 2,
+				readPreference: 'secondary'
+			});
+
+			sinon.assert.calledOnceWithExactly(publishEventsStub, QUEUE_URL, [{
+				content: {
+					entity: 'shipment',
+					mode: 'initialById',
+					lastId: 'id4'
+				}
+			}]);
+
+			const [[updateValues, updateFilter]] = ClientModel.prototype.update.args;
+			assert.deepStrictEqual(updateFilter, { code: clientCode });
+			assert.deepStrictEqual(updateValues.$inc, { 'settings.shipment.initialLoad.totalItems': 4 });
+			assert.strictEqual(updateValues['settings.shipment.initialLoad.lastId'], 'id4');
+			assert.ok(updateValues['settings.shipment.initialLoad.dateStart']);
+			assert.strictEqual(updateValues['settings.shipment.initialLoad.dateEnd'], undefined);
+		});
+
+		it('Should re-queue when executionLimit is reached on continuation: sets lastId but not dateStart nor dateEnd', async () => {
+
+			sinon.stub(ShipmentModel.prototype, 'get')
+				.onFirstCall()
+				.resolves([{ id: 'id3', code: 'shipment3' }, { id: 'id4', code: 'shipment4' }])
+				.onSecondCall()
+				.resolves([{ id: 'id5', code: 'shipment5' }, { id: 'id6', code: 'shipment6' }]);
+
+			await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
+				entity: 'shipment',
+				mode: 'initialById',
+				lastId: 'id2'
+			}]));
+
+			assert.strictEqual(ShipmentModel.prototype.get.callCount, 2);
+
+			sinon.assert.calledOnceWithExactly(publishEventsStub, QUEUE_URL, [{
+				content: {
+					entity: 'shipment',
+					mode: 'initialById',
+					lastId: 'id6'
+				}
+			}]);
+
+			const [[updateValues, updateFilter]] = ClientModel.prototype.update.args;
+			assert.deepStrictEqual(updateFilter, { code: clientCode });
+			assert.deepStrictEqual(updateValues.$inc, { 'settings.shipment.initialLoad.totalItems': 4 });
+			assert.strictEqual(updateValues['settings.shipment.initialLoad.lastId'], 'id6');
+			assert.strictEqual(updateValues['settings.shipment.initialLoad.dateStart'], undefined);
+			assert.strictEqual(updateValues['settings.shipment.initialLoad.dateEnd'], undefined);
+		});
+
+		it('Should not re-queue and set dateEnd when get() returns empty array on continuation', async () => {
+
+			sinon.stub(ShipmentModel.prototype, 'get').resolves([]);
+
+			await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
+				entity: 'shipment',
+				mode: 'initialById',
+				lastId: 'lastPage'
+			}]));
+
+			sinon.assert.notCalled(publishEventsStub);
+
+			const [[updateValues, updateFilter]] = ClientModel.prototype.update.args;
+			assert.deepStrictEqual(updateFilter, { code: clientCode });
+			assert.ok(updateValues['settings.shipment.initialLoad.dateEnd']);
+		});
+
+		it('Should upload to S3 with load_type=initial key prefix', async () => {
+
+			sinon.stub(ShipmentModel.prototype, 'get').resolves([{ id: 'id1', code: 'shipment1' }]);
+
+			await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
+				entity: 'shipment',
+				mode: 'initialById'
+			}]));
+
+			const createCalls = s3Mock.calls(CreateMultipartUploadCommand);
+
+			assert.strictEqual(createCalls.length, 1);
+			assert.strictEqual(createCalls[0].args[0].input.Bucket, 'test-bucket');
+			assert.ok(createCalls[0].args[0].input.Key.startsWith('microservice=test-service/entity=shipment/load_type=initial/client_code=defaultClient/'));
+		});
+
+		it('Should respect custom initialLoad settings for batchSize and executionLimit', async () => {
+
+			settingsGetStub.returns({
+				entities: [
+					{ name: 'shipment', initialLoad: { byId: true, batchSize: 3, executionLimit: 3 } }
+				]
+			});
+
+			sinon.stub(ShipmentModel.prototype, 'get').resolves([
+				{ id: 'id1', code: 'shipment1' },
+				{ id: 'id2', code: 'shipment2' },
+				{ id: 'id3', code: 'shipment3' }
+			]);
+
+			await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
+				entity: 'shipment',
+				mode: 'initialById'
+			}]));
+
+			sinon.assert.calledOnceWithExactly(ShipmentModel.prototype.get, {
+				order: { id: 'asc' },
+				limit: 3,
+				readPreference: 'secondary'
+			});
+
+			sinon.assert.calledOnceWithExactly(publishEventsStub, QUEUE_URL, [{
+				content: {
+					entity: 'shipment',
+					mode: 'initialById',
+					lastId: 'id3'
+				}
+			}]);
+
+			const [[updateValues]] = ClientModel.prototype.update.args;
+			assert.deepStrictEqual(updateValues.$inc, { 'settings.shipment.initialLoad.totalItems': 3 });
+		});
+
+		it('Should use default batchSize and executionLimit when initialLoad settings are not set', async () => {
+
+			settingsGetStub.returns({
+				entities: [
+					{ name: 'shipment' }
+				]
+			});
+
+			sinon.stub(ShipmentModel.prototype, 'get').resolves([{ id: 'id1', code: 'shipment1' }]);
+
+			await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
+				entity: 'shipment',
+				mode: 'initialById'
+			}]));
+
+			sinon.assert.calledOnceWithExactly(ShipmentModel.prototype.get, {
+				order: { id: 'asc' },
+				limit: 10000,
+				readPreference: 'secondary'
+			});
+		});
 	});
 });

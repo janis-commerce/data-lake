@@ -19,6 +19,74 @@ npm install @janiscommerce/data-lake
 
 > **Warning:** The consumer uses `returnType: 'cursor'` on the model `get()`. Your service must use **@janiscommerce/mongodb** version **3.14.0** or higher, where cursor support was added.
 
+<details>
+
+<summary><strong>Flows</strong></summary>
+
+### Incremental load
+
+Triggered automatically by EventBridge on a schedule per entity. For each active client, the Lambda computes a date window from the last watermark and enqueues one message.
+
+```mermaid
+flowchart LR
+  sched["EventBridge Schedule\n(per entity)"] --> lambda[DataLakeLoad Lambda]
+  lambda --> readSettings["Read clients\nsettings.entity.lastIncrementalLoadDate"]
+  readSettings --> calc["Compute from = lastIncrementalLoadDate\nto = min(from+1d, now)"]
+  calc --> publish["SqsEmitter.publishEvents\n(one msg per client/partition)"]
+  publish --> updWm["Update settings.entity.lastIncrementalLoadDate = to"]
+  publish --> sqs[(SQS queue)]
+  sqs --> consumer[DataLakeSync Consumer]
+  consumer --> query["model.get\nfilters: dateModifiedFrom/To\n+ additionalFilters\nreturnType: cursor"]
+  query --> stream["Stream NDJSON, gzip,\nrotate parts by maxSizeMB"]
+  stream --> s3[(S3 raw bucket\nload_type=incremental)]
+```
+
+### Initial load by `dateCreated`
+
+Triggered manually by invoking the Lambda with `entity` and `from` (and optionally `to`). The Lambda fans out one message per day in the date range.
+
+```mermaid
+flowchart LR
+  manual["Manual invoke\nentity, from, to?, clientCode?"] --> lambda[DataLakeLoad Lambda]
+  lambda --> fanout["Build one message per day\nbetween from and to"]
+  fanout --> chunk["Chunk in batches of 50"]
+  chunk --> sqs[(SQS queue)]
+  sqs --> consumer[DataLakeSync Consumer]
+  consumer --> query["model.get\nfilters: dateCreatedFrom/To\n+ additionalFilters\nreturnType: cursor"]
+  query --> stream["Stream NDJSON, gzip,\nrotate parts by maxSizeMB"]
+  stream --> s3[(S3 raw bucket\nload_type=initial)]
+```
+
+### Initial load by id
+
+Used when the entity does not have a `dateCreated` index. A single message is sent; the consumer iterates in batches ordered by `_id`, saves progress in the client settings, and re-enqueues itself until all documents are exported.
+
+```mermaid
+flowchart TD
+  manual["Manual invoke\nentity"] --> lambda[DataLakeLoad Lambda]
+  lambda --> firstMsg["Single SQS message\nmode=initialById, no lastId"]
+  firstMsg --> sqs[(SQS queue)]
+  sqs --> consumer[DataLakeSync Consumer]
+  consumer --> firstExec{body.lastId?}
+  firstExec -- no --> markStart["mark first execution\n(will set dateStart)"]
+  firstExec -- yes --> resume[resume from lastId]
+  markStart --> loop
+  resume --> loop
+  loop["do-while:\nmodel.get order id asc,\nfilter id > lastId,\nlimit = batchSize"] --> dump["write to PassThrough,\nrotate S3 part by maxSizeMB"]
+  dump --> cont{"items == batchSize\n&& processed < executionLimit?"}
+  cont -- yes --> loop
+  cont -- no --> closeS3["close PassThrough,\nawait uploads"]
+  closeS3 --> done{last batch < batchSize?}
+  done -- yes --> finish["clientModel.update:\n$inc totalItems, set lastId, dateEnd\n(+ dateStart if first)"]
+  done -- no --> partial["clientModel.update:\n$inc totalItems, set lastId\n(+ dateStart if first)"]
+  partial --> requeue[enqueue next msg with lastId]
+  requeue --> sqs
+  finish --> s3[(S3 raw bucket\nload_type=initial)]
+  partial --> s3
+```
+
+</details>
+
 ## Usage in a Janis service
 
 To enable Data Lake sync in a microservice, follow these steps.
@@ -52,7 +120,7 @@ module.exports = helper({
 
 - Lambda **DataLakeLoad** (handler: `src/lambda/DataLakeLoad/index.js`)
 - SQS queue and consumer Lambda for **dataLakeSync** (handler: `src/sqs-consumer/data-lake-sync-consumer.js`)
-- EventBridge Schedule Group and one Schedule per entity (from Settings), invoking the Lambda with `incremental: true` and `entity` in kebab-case
+- EventBridge Schedule Group and one Schedule per entity (from Settings), invoking the Lambda with `mode: 'incremental'` and `entity` in kebab-case
 - IAM role for the scheduler to invoke the Lambda
 
 ---
@@ -73,7 +141,7 @@ module.exports.handler = (...args) => Handler.handle(DataLakeLoadFunction, ...ar
 
 ```
 
-**Payload:** The Lambda receives a payload with `entity`, `incremental`, and optionally `from`, `to`, `limit`, `maxSizeMB`. The schedules send only `{ incremental: true, entity: "<entity-kebab-case>" }`. For an **initial load** you must invoke the Lambda manually with `entity`, `incremental: false`, and `from` (and optionally `to`, `limit`, `maxSizeMB`). Sync messages sent to SQS can also carry **`additionalFilters`** and **`filenamePrefix`** when you override `prepareIncrementalMessages` (see below).
+**Payload:** The Lambda receives a payload with `entity` and optionally `mode`, `from`, `to`, `limit`, `maxSizeMB`. The schedules send `{ mode: 'incremental', entity: "<entity-kebab-case>" }`. For an **initial load by date range** you must invoke the Lambda manually with `entity` and `from` (and optionally `to`, `limit`, `maxSizeMB`). For an **initial load by id** the entity setting `initialLoad.byId: true` determines the mode automatically. Sync messages sent to SQS can also carry **`additionalFilters`** and **`filenamePrefix`** when you override `prepareIncrementalMessages` (see below).
 
 **Performance:** The Lambda reuses a single `SqsEmitter` instance across all clients in a single invocation, avoiding file descriptor exhaustion (`EMFILE` errors) when processing hundreds or thousands of clients. Initial load messages are prepared once and reused for all clients.
 
@@ -90,12 +158,11 @@ Some entities need **compound query filters** (for example, to match a MongoDB i
 | Field                 | Type          | Description                                                                                                                       |
 | --------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `entity`              | string        | Entity in kebab-case (same as settings).                                                                                          |
-| `incremental`         | boolean       | `true` for incremental.                                                                                                           |
+| `mode`                | string        | `'incremental'` — set automatically by the base class.                                                                          |
 | `from`                | Date or string | Start of range (provided by the base class; serializes to ISO when sent to SQS).                                                 |
 | `to`                  | Date or string | End of range.                                                                                                                     |
 | `additionalFilters`   | object        | **Optional.** Merged into the consumer’s `filters` (e.g. `{ warehouse: id }`). Keys must match what your model’s `get()` expects. |
 | `filenamePrefix`      | string        | **Optional.** Prepended to the S3 object file name (with a trailing `-`) so partitioned runs for the same window do not collide (e.g. `warehouse-123`). |
-| `limit` / `maxSizeMB` | number        | **Optional.** Passed through like manual invokes.                                                                                 |
 
 **Consumer:** See `DataLakeSyncConsumer` — it validates `additionalFilters` as an optional object and applies it alongside `dateModifiedFrom` / `dateModifiedTo` (incremental) or `dateCreatedFrom` / `dateCreatedTo` (initial). Optional `filenamePrefix` is applied to uploaded `.ndjson.gz` keys: `…/<prefix>-<from>-<pushedAt>-<part>.ndjson.gz` (omit `filenamePrefix` for the default `…/<from>-<pushedAt>-<part>.ndjson.gz`).
 
@@ -128,7 +195,8 @@ class WMSDataLakeLoadFunction extends DataLakeLoadFunction {
 		const messages = [];
 
 		await warehouseModel.getPaged({
-			fields: ['id']
+			fields: ['id'],
+			readPreference: 'secondary'
 		}, warehouses => {
 			warehouses.forEach(({ id }) => {
 				messages.push({
@@ -185,11 +253,15 @@ Configure which entities are synced and how often (in minutes). Settings are rea
 		"entities": [{
 			"name": "order",
 			"frequency": 60,
-			"initialLoadDate": "2025-01-01 00:00:00"
+			"initialLoad": {
+				"dateFrom": "2025-01-01 00:00:00"
+			}
 		}, {
 			"name": "product",
 			"frequency": 120,
-			"initialLoadDate": "2025-01-01 00:00:00"
+			"initialLoad": {
+				"dateFrom": "2025-01-01 00:00:00"
+			}
 		}]
 	}
 }
@@ -202,14 +274,17 @@ Configure which entities are synced and how often (in minutes). Settings are rea
 | ----------------- | ------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `name`            | string | Yes      | Entity name in **kebab-case**. Must match the model path: the package loads the model from `models/<name>.js` (e.g. `order` → `models/order.js`). This same value is sent in the payload as `entity`.                                    | `1.0.0` |
 | `frequency`       | number | No       | How often (in minutes) to run the incremental sync. Default: `60`. Used in the Schedule expression: `rate(<frequency> minutes)`.                                                                                                         | `1.0.0` |
-| `initialLoadDate` | string | Yes      | Valid date string (e.g. `YYYY-MM-DD HH:mm:ss` or ISO). Used when the client has no `settings.<entity>.lastIncrementalLoadDate` for this entity (e.g. first run or new clients). Required so incremental sync can compute the date range. | `1.0.0` |
 | `fields`          | array  | No       | If set, only these fields are requested from the model in the consumer (reduces payload size and control what goes to the Data Lake).                                                                                                    | `1.0.0` |
 | `excludeFields`   | array  | No       | If set, these fields are excluded from the model in the consumer (reduces payload size and control what goes to the Data Lake).                                                                                                          | `1.1.0` |
 | `readPreference`  | string | No       | MongoDB read preference passed to the model `get()` call. Default: `'secondary'`. Requires **@janiscommerce/mongodb 3.17.0** or higher.                                                                                                 | `1.4.0` |
 | `hint`            | object \| string | No       | MongoDB index hint passed to the model `get()` call. Can be an index spec object (e.g. `{ dateModified: 1, warehouse: 1 }`) or the index name as a string (e.g. `"dateModified_1_warehouse_1"`).                               | `1.5.0` |
+| `initialLoad.dateFrom` | string | No | Valid date string (e.g. `YYYY-MM-DD HH:mm:ss` or ISO). Used as the starting date for incremental sync when the client has no `settings.<entity>.lastIncrementalLoadDate`. Required when not using `initialLoad.byId`. | `1.6.0` |
+| `initialLoad.byId` | boolean | No | When `true`, switches the initial load strategy to `_id`-based pagination. A single SQS message is sent with `mode: 'initialById'`; the consumer queries ordered by `id: 'asc'` and auto-paginates via `lastId`. Mutually exclusive with `initialLoad.dateFrom`. | `1.6.0` |
+| `initialLoad.batchSize` | number | No | Number of documents fetched per iteration inside one consumer execution in `initialLoadById` mode. Default: `10000`. | `1.6.0` |
+| `initialLoad.executionLimit` | number | No | Maximum total documents processed in a single consumer invocation in `initialLoadById` mode. When reached, the consumer automatically re-queues the next page with the last processed `_id`. Default: `100000`. | `1.6.0` |
+| `maxSizeMB` | number | No | Maximum size in MB of the S3 files. Default: `500`. | `1.6.0` |
 
-
-**Example with `fields`, `excludeFields` and `initialLoadDate`:**
+**Example with `fields`, `excludeFields` and `initialLoad.dateFrom`:**
 
 ```json
 {
@@ -218,7 +293,9 @@ Configure which entities are synced and how often (in minutes). Settings are rea
 			{
 				"name": "order",
 				"frequency": 30,
-				"initialLoadDate": "2025-01-01 00:00:00",
+				"initialLoad": {
+					"dateFrom": "2025-01-01 00:00:00"
+				},
 				"fields": ["id", "commerceId", "total", "status"]
 			}
 		]
@@ -232,7 +309,7 @@ Configure which entities are synced and how often (in minutes). Settings are rea
 
 ### Manual execution: initial load
 
-To run an **initial load** (full export by date range) you must invoke the **DataLakeLoad** Lambda manually. The payload must include the entity and the start date; end date and client are optional (default: all active clients, up to today).
+To run an **initial load** (full export by date range or by `_id`) you must invoke the **DataLakeLoad** Lambda manually. The payload must include the entity and the start date; end date and client are optional (default: all active clients, up to today).
 
 **Payload:**
 
@@ -240,15 +317,10 @@ To run an **initial load** (full export by date range) you must invoke the **Dat
 | Field               | Type    | Required | Description                                                                                                                                           | Since   |
 | ------------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `entity`            | string  | Yes      | Entity name in kebab-case (e.g. `order`, `product`).                                                                                                  | `1.0.0` |
-| `incremental`       | boolean | Yes      | Use `false` for initial load.                                                                                                                         | `1.0.0` |
-| `from`              | string  | Yes      | Start date (valid date string, e.g. `YYYY-MM-DD HH:mm:ss` or ISO).                                                                                    | `1.0.0` |
+| `mode`              | string  | Yes      | Use `'initial'` for initial load by date range or by `_id`. Default: `'initial'`.                                        | `1.6.0` |
+| `from`              | string  | No      | Start date (valid date string, e.g. `YYYY-MM-DD HH:mm:ss` or ISO).                                                                                    | `1.0.0` |
 | `to`                | string  | No       | End date. Default: today end of day.                                                                                                                  | `1.0.0` |
-| `additionalFilters` | object  | No       | Optional additional filters to be merged into the consumer’s `filters` (e.g. `{ warehouse: id }`). Keys must match what your model’s `get()` expects. | `1.1.0` |
-| `filenamePrefix`    | string  | No       | Optional prefix for the S3 file name segment (before `from`-`pushedAt`-part). Use when several exports share the same date window.                     | `1.2.0` |
 | `clientCode`        | string  | No       | If set, only this client is synced; otherwise all active clients.                                                                                     | `1.0.0` |
-| `limit`             | number  | No       | Optional limit passed to the consumer.                                                                                                                | `1.0.0` |
-| `maxSizeMB`         | number  | No       | Optional max size per file (MB) in the consumer.                                                                                                      | `1.0.0` |
-
 
 **Example: all clients, from a given date to today**
 
@@ -256,7 +328,7 @@ To run an **initial load** (full export by date range) you must invoke the **Dat
 {
   "body": {
     "entity": "order",
-    "incremental": false,
+    "mode": "initial",
     "from": "2025-01-01 00:00:00"
   }
 }
@@ -268,13 +340,62 @@ To run an **initial load** (full export by date range) you must invoke the **Dat
 {
   "body": {
     "entity": "product",
-    "incremental": false,
     "from": "2025-01-01 00:00:00",
     "to": "2025-06-30 23:59:59",
     "clientCode": "my-client-code"
   }
 }
 ```
+
+---
+
+### Initial load by id (for large collections without `dateCreated` index)
+
+When an entity has `initialLoad.byId: true` in its settings, the Lambda sends a **single SQS message** with `mode: 'initialById'` (no date range) and the consumer iterates through all documents ordered by `_id` in a do-while loop:
+
+1. Each consumer invocation runs a do-while loop, fetching `initialLoad.batchSize` documents per iteration (default `10000`), ordered by `id: 'asc'` with an `id > lastId` filter when continuing from a previous execution.
+2. The loop continues until either the last batch returns fewer documents than `batchSize` (all documents exported) or the total processed in the current invocation reaches `initialLoad.executionLimit` (default `100000`).
+3. When `executionLimit` is reached, the consumer **automatically re-queues** a new SQS message with the last processed `_id` as `lastId` to continue in the next invocation.
+4. Progress is persisted in the client settings after each invocation (see below).
+
+**Client settings updated automatically:**
+
+| Key | Set when |
+| --- | --- |
+| `settings.<entity>.initialLoad.dateStart` | First invocation (no `lastId` in the message) |
+| `settings.<entity>.initialLoad.lastId` | Every invocation that processes at least one document |
+| `settings.<entity>.initialLoad.totalItems` | Every invocation, incremented by the count processed in that run |
+| `settings.<entity>.initialLoad.dateEnd` | Last invocation (last batch returned fewer documents than `batchSize`) |
+
+**Settings example:**
+
+```json
+{
+	"dataLake": {
+		"entities": [{
+			"name": "stock",
+			"frequency": 60,
+			"initialLoad": {
+				"byId": true,
+				"batchSize": 10000,
+				"executionLimit": 100000
+			}
+		}]
+	}
+}
+```
+
+**Manual invocation payload** (only `entity` is required; `maxSizeMB` is optional):
+
+```json
+{
+  "body": {
+    "entity": "stock"
+  }
+}
+```
+
+> **Note:** `initialLoad.byId` is mutually exclusive with `initialLoad.dateFrom`-based initial load. When `initialLoad.byId` is set, the `from`/`to` payload fields and the `initialLoad.dateFrom` setting are ignored.
 
 ---
 
