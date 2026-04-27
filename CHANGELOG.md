@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-04-27
+### Fixed
+- Fixed client data `initialLoad.dateStart` and `initialLoad.dateEnd` dates
+- Using `initialLoad.dateStart` for first incremental execution
+
+## [1.6.0] - 2026-04-27
 ### Added
 - Entity setting `initialLoad.byId: true` to enable initial load paginated by `_id` instead of `dateCreated`, for entities with large collections where `dateCreated` is not indexed
 - Entity settings `initialLoad.batchSize` (default `10000`) and `initialLoad.executionLimit` (default `100000`) to control cursor batch size and page size for the `initialLoad.byId` mode

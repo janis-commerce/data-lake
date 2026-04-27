@@ -355,14 +355,10 @@ describe('DataLakeSyncConsumer', () => {
 
 			sinon.stub(ShipmentModel.prototype, 'get').resolves([{ id: 'id1', code: 'shipment1' }]);
 
-			const before = new Date();
-
 			await SQSHandler.handle(DataLakeSyncConsumer, createEvent([{
 				entity: 'shipment',
 				mode: 'initialById'
 			}]));
-
-			const after = new Date();
 
 			sinon.assert.calledOnceWithExactly(ShipmentModel.prototype.get, {
 				order: { id: 'asc' },
@@ -372,14 +368,14 @@ describe('DataLakeSyncConsumer', () => {
 
 			sinon.assert.notCalled(publishEventsStub);
 
-			const [[updateValues, updateFilter]] = ClientModel.prototype.update.args;
-			assert.deepStrictEqual(updateFilter, { code: clientCode });
-			assert.deepStrictEqual(updateValues.$inc, { 'settings.shipment.initialLoad.totalItems': 1 });
-			assert.strictEqual(updateValues['settings.shipment.initialLoad.lastId'], 'id1');
-			assert.ok(updateValues['settings.shipment.initialLoad.dateStart'] >= before);
-			assert.ok(updateValues['settings.shipment.initialLoad.dateStart'] <= after);
-			assert.ok(updateValues['settings.shipment.initialLoad.dateEnd'] >= before);
-			assert.ok(updateValues['settings.shipment.initialLoad.dateEnd'] <= after);
+			sinon.assert.calledOnceWithExactly(ClientModel.prototype.update, {
+				'settings.shipment.initialLoad.dateStart': sinon.match.date,
+				'settings.shipment.initialLoad.totalItems': 1,
+				'settings.shipment.initialLoad.lastId': 'id1',
+				'settings.shipment.initialLoad.dateEnd': sinon.match.date
+			}, {
+				code: clientCode
+			});
 		});
 
 		it('Should process continuation: last batch smaller than batchSize sets dateEnd and lastId without dateStart', async () => {
@@ -401,12 +397,15 @@ describe('DataLakeSyncConsumer', () => {
 
 			sinon.assert.notCalled(publishEventsStub);
 
-			const [[updateValues, updateFilter]] = ClientModel.prototype.update.args;
-			assert.deepStrictEqual(updateFilter, { code: clientCode });
-			assert.deepStrictEqual(updateValues.$inc, { 'settings.shipment.initialLoad.totalItems': 1 });
-			assert.strictEqual(updateValues['settings.shipment.initialLoad.lastId'], 'id99');
-			assert.ok(updateValues['settings.shipment.initialLoad.dateEnd']);
-			assert.strictEqual(updateValues['settings.shipment.initialLoad.dateStart'], undefined);
+			sinon.assert.calledOnceWithExactly(ClientModel.prototype.update, {
+				$inc: {
+					'settings.shipment.initialLoad.totalItems': 1
+				},
+				'settings.shipment.initialLoad.lastId': 'id99',
+				'settings.shipment.initialLoad.dateEnd': sinon.match.date
+			}, {
+				code: clientCode
+			});
 		});
 
 		it('Should re-queue when executionLimit is reached on first execution: sets dateStart and lastId but not dateEnd', async () => {
@@ -445,12 +444,13 @@ describe('DataLakeSyncConsumer', () => {
 				}
 			}]);
 
-			const [[updateValues, updateFilter]] = ClientModel.prototype.update.args;
-			assert.deepStrictEqual(updateFilter, { code: clientCode });
-			assert.deepStrictEqual(updateValues.$inc, { 'settings.shipment.initialLoad.totalItems': 4 });
-			assert.strictEqual(updateValues['settings.shipment.initialLoad.lastId'], 'id4');
-			assert.ok(updateValues['settings.shipment.initialLoad.dateStart']);
-			assert.strictEqual(updateValues['settings.shipment.initialLoad.dateEnd'], undefined);
+			sinon.assert.calledOnceWithExactly(ClientModel.prototype.update, {
+				'settings.shipment.initialLoad.dateStart': sinon.match.date,
+				'settings.shipment.initialLoad.totalItems': 4,
+				'settings.shipment.initialLoad.lastId': 'id4'
+			}, {
+				code: clientCode
+			});
 		});
 
 		it('Should re-queue when executionLimit is reached on continuation: sets lastId but not dateStart nor dateEnd', async () => {
@@ -477,12 +477,14 @@ describe('DataLakeSyncConsumer', () => {
 				}
 			}]);
 
-			const [[updateValues, updateFilter]] = ClientModel.prototype.update.args;
-			assert.deepStrictEqual(updateFilter, { code: clientCode });
-			assert.deepStrictEqual(updateValues.$inc, { 'settings.shipment.initialLoad.totalItems': 4 });
-			assert.strictEqual(updateValues['settings.shipment.initialLoad.lastId'], 'id6');
-			assert.strictEqual(updateValues['settings.shipment.initialLoad.dateStart'], undefined);
-			assert.strictEqual(updateValues['settings.shipment.initialLoad.dateEnd'], undefined);
+			sinon.assert.calledOnceWithExactly(ClientModel.prototype.update, {
+				$inc: {
+					'settings.shipment.initialLoad.totalItems': 4
+				},
+				'settings.shipment.initialLoad.lastId': 'id6'
+			}, {
+				code: clientCode
+			});
 		});
 
 		it('Should not re-queue and set dateEnd when get() returns empty array on continuation', async () => {
@@ -551,8 +553,13 @@ describe('DataLakeSyncConsumer', () => {
 				}
 			}]);
 
-			const [[updateValues]] = ClientModel.prototype.update.args;
-			assert.deepStrictEqual(updateValues.$inc, { 'settings.shipment.initialLoad.totalItems': 3 });
+			sinon.assert.calledOnceWithExactly(ClientModel.prototype.update, {
+				'settings.shipment.initialLoad.dateStart': sinon.match.date,
+				'settings.shipment.initialLoad.totalItems': 3,
+				'settings.shipment.initialLoad.lastId': 'id3'
+			}, {
+				code: clientCode
+			});
 		});
 
 		it('Should use default batchSize and executionLimit when initialLoad settings are not set', async () => {

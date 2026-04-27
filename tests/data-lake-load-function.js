@@ -52,16 +52,16 @@ describe('DataLakeLoadFunction', () => {
 
 	describe('Incremental load', () => {
 
-		const dateFrom = '2025-01-01 00:00:00';
+		const dateStart = '2025-01-01 00:00:00';
 
 		beforeEach(() => {
 			settingsGetStub
-				.returns({ entities: [{ name: 'order', initialLoad: { dateFrom } }] });
+				.returns({ entities: [{ name: 'order', initialLoad: { byId: true } }] });
 		});
 
 		it('Should send message and update client when client has no lastIncrementalLoadDate for entity', async () => {
 
-			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
+			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1', settings: { order: { initialLoad: { dateStart } } } }]);
 
 			await DataLakeLoad({ entity: 'order', mode: 'incremental' });
 
@@ -71,8 +71,8 @@ describe('DataLakeLoadFunction', () => {
 				filters: { status: 'active' }
 			});
 
-			const from = new Date(dateFrom);
-			const to = new Date(dateFrom);
+			const from = new Date(dateStart);
+			const to = new Date(dateStart);
 			to.setDate(to.getDate() + 1);
 
 			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
@@ -163,7 +163,7 @@ describe('DataLakeLoadFunction', () => {
 
 			publishEventsStub.resolves({ failedCount: 1 });
 
-			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
+			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1', settings: { order: { initialLoad: { dateStart } } } }]);
 
 			await DataLakeLoad({ entity: 'order', mode: 'incremental' });
 
@@ -173,8 +173,8 @@ describe('DataLakeLoadFunction', () => {
 				filters: { status: 'active' }
 			});
 
-			const from = new Date(dateFrom);
-			const to = new Date(dateFrom);
+			const from = new Date(dateStart);
+			const to = new Date(dateStart);
 			to.setDate(to.getDate() + 1);
 
 			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
