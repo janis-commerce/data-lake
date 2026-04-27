@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [1.6.1] - 2026-04-27
 ### Fixed
-- Fixed client data `initialLoad.dateStart` and `initialLoad.dateEnd` dates
+- Fixed client settings `initialLoad.dateStart` and `initialLoad.dateEnd` dates
 - Using `initialLoad.dateStart` for first incremental execution
 
 ## [1.6.0] - 2026-04-27
