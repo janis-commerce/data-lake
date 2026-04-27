@@ -67,7 +67,7 @@ describe('DataLakeLoadFunction', () => {
 
 			sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'client');
 			sinon.assert.calledOnceWithExactly(ClientModel.prototype.get, {
-				fields: ['code', 'settings.order.lastIncrementalLoadDate'],
+				fields: ['code', 'settings.order'],
 				filters: { status: 'active' }
 			});
 
@@ -101,7 +101,7 @@ describe('DataLakeLoadFunction', () => {
 
 			sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'client');
 			sinon.assert.calledOnceWithExactly(ClientModel.prototype.get, {
-				fields: ['code', 'settings.order.lastIncrementalLoadDate'],
+				fields: ['code', 'settings.order'],
 				filters: { status: 'active' }
 			});
 
@@ -136,7 +136,7 @@ describe('DataLakeLoadFunction', () => {
 
 			sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'client');
 			sinon.assert.calledOnceWithExactly(ClientModel.prototype.get, {
-				fields: ['code', 'settings.order.lastIncrementalLoadDate'],
+				fields: ['code', 'settings.order'],
 				filters: { status: 'active' }
 			});
 
@@ -169,7 +169,7 @@ describe('DataLakeLoadFunction', () => {
 
 			sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'client');
 			sinon.assert.calledOnceWithExactly(ClientModel.prototype.get, {
-				fields: ['code', 'settings.order.lastIncrementalLoadDate'],
+				fields: ['code', 'settings.order'],
 				filters: { status: 'active' }
 			});
 
@@ -211,9 +211,9 @@ describe('DataLakeLoadFunction', () => {
 			sinon.assert.notCalled(ClientModel.prototype.update);
 		});
 
-		it('Should send one message per day with correct from/to and mode initial', async () => {
+		it('Should send one message per day per client with correct from/to and mode initial', async () => {
 
-			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
+			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }, { code: 'client2' }]);
 
 			await DataLakeLoad({
 				entity: 'order',
@@ -223,7 +223,7 @@ describe('DataLakeLoadFunction', () => {
 
 			sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'client');
 			sinon.assert.calledOnceWithExactly(ClientModel.prototype.get, {
-				fields: ['code', 'settings.order.lastIncrementalLoadDate'],
+				fields: ['code', 'settings.order'],
 				filters: { status: 'active' }
 			});
 
@@ -232,7 +232,8 @@ describe('DataLakeLoadFunction', () => {
 			const day2Start = new Date(2026, 0, 2, 0, 0, 0, 0);
 			const day2End = new Date(2026, 0, 2, 23, 59, 59, 999);
 
-			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
+			sinon.assert.calledTwice(SqsEmitter.prototype.publishEvents);
+			sinon.assert.calledWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
 				content: {
 					entity: 'order',
 					mode: 'initial',
@@ -262,7 +263,7 @@ describe('DataLakeLoadFunction', () => {
 
 			sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'client');
 			sinon.assert.calledOnceWithExactly(ClientModel.prototype.get, {
-				fields: ['code', 'settings.order.lastIncrementalLoadDate'],
+				fields: ['code', 'settings.order'],
 				filters: { status: 'active', code: 'customClient' }
 			});
 
@@ -302,7 +303,7 @@ describe('DataLakeLoadFunction', () => {
 
 			sinon.assert.calledOnceWithExactly(ModelFetcher.get, 'client');
 			sinon.assert.calledOnceWithExactly(ClientModel.prototype.get, {
-				fields: ['code', 'settings.order.lastIncrementalLoadDate'],
+				fields: ['code', 'settings.order'],
 				filters: { status: 'active' }
 			});
 
@@ -435,6 +436,21 @@ describe('DataLakeLoadFunction', () => {
 				content: {
 					entity: 'order',
 					mode: 'initialById'
+				}
+			}]);
+		});
+
+		it('Should send a single message with mode initialById and lastId', async () => {
+
+			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1', settings: { order: { initialLoad: { byId: true, lastId: 'id1' } } } }]);
+
+			await DataLakeLoad({ entity: 'order' });
+
+			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
+				content: {
+					entity: 'order',
+					mode: 'initialById',
+					lastId: 'id1'
 				}
 			}]);
 		});
