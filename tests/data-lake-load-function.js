@@ -440,9 +440,9 @@ describe('DataLakeLoadFunction', () => {
 			}]);
 		});
 
-		it('Should send a single message with mode initialById and lastId', async () => {
+		it('Should send a single message with mode initialById and lastId (resume initial load from lastId)', async () => {
 
-			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1', settings: { order: { initialLoad: { byId: true, lastId: 'id1' } } } }]);
+			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1', settings: { order: { initialLoad: { lastId: 'id1' } } } }]);
 
 			await DataLakeLoad({ entity: 'order' });
 

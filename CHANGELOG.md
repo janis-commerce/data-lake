@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.6.4] - 2026-04-28
+### Fixed
+- Fixed resuming initial load by `_id` from a previous execution
+
 ## [1.6.3] - 2026-04-27
 ### Fixed
 - Allow resuming initial load by `_id` from a previous execution
