@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-04-29
+### Changed
+- Incremental load: when both `settings.<entity>.lastIncrementalLoadDate` and `settings.<entity>.initialLoad.dateStart` are set, the later date is used (instead of always preferring `lastIncrementalLoadDate`)
+
 ## [1.6.4] - 2026-04-28
 ### Fixed
 - Fixed resuming initial load by `_id` from a previous execution

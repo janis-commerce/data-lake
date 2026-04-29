@@ -125,6 +125,37 @@ describe('DataLakeLoadFunction', () => {
 			});
 		});
 
+		it('Should use the newer of lastIncrementalLoadDate and initialLoad.dateStart when both are set', async () => {
+
+			const lastIncrementalLoadDate = '2025-01-01 00:00:00';
+			const newerDateStart = '2025-12-01 00:00:00';
+
+			sinon.stub(ClientModel.prototype, 'get').resolves([{
+				code: 'client1',
+				settings: {
+					order: {
+						lastIncrementalLoadDate,
+						initialLoad: { dateStart: newerDateStart }
+					}
+				}
+			}]);
+
+			await DataLakeLoad({ entity: 'order', mode: 'incremental' });
+
+			const from = new Date(newerDateStart);
+			const to = new Date(newerDateStart);
+			to.setDate(to.getDate() + 1);
+
+			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
+				content: {
+					entity: 'order',
+					mode: 'incremental',
+					from,
+					to
+				}
+			}]);
+		});
+
 		it('Should send message and update client when client has lastIncrementalLoadDate for entity and is today', async () => {
 
 			const lastIncrementalLoadDate = new Date();
