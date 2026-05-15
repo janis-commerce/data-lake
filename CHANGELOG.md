@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Initial load (non-byId mode) now persists `settings.<entity>.initialLoad.dateFrom` on each client after successful enqueue, as an audit/resume marker (read path remains entity-level)
+
+### Changed
+- Incremental load no longer throws for clients without `lastIncrementalLoadDate` or `initialLoad.dateStart`. Instead, it bootstraps `lastIncrementalLoadDate = now` (no historical data is loaded) so subsequent incremental runs operate normally
+
+### Fixed
+- `DataLakeLoad` process loop now isolates per-client failures: an error processing one client no longer blocks the rest. The lambda still surfaces as failed at the end with a summary listing the failing client codes
 
 ## [1.7.0] - 2026-04-29
 ### Changed

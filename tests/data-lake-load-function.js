@@ -220,14 +220,48 @@ describe('DataLakeLoadFunction', () => {
 			sinon.assert.notCalled(ClientModel.prototype.update);
 		});
 
-		it('Should throw when initialLoad.dateFrom is missing from payload', async () => {
+		it('Should bootstrap with lastIncrementalLoadDate = now and enqueue zero-window when no dates configured', async () => {
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
 
 			settingsGetStub
 				.returns({ entities: [{ name: 'order' }] });
 
-			await assert.rejects(() => DataLakeLoad({ entity: 'order', mode: 'incremental' }));
+			await assert.doesNotReject(() => DataLakeLoad({ entity: 'order', mode: 'incremental' }));
+
+			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, [{
+				content: {
+					entity: 'order',
+					mode: 'incremental',
+					from: fakeCurrentDate,
+					to: fakeCurrentDate
+				}
+			}]);
+
+			sinon.assert.calledOnceWithExactly(ClientModel.prototype.update, {
+				'settings.order.lastIncrementalLoadDate': fakeCurrentDate
+			}, {
+				code: 'client1'
+			});
+		});
+
+		it('Should continue processing remaining clients when one client throws and rethrow with summary at the end', async () => {
+
+			sinon.stub(ClientModel.prototype, 'get').resolves([
+				{ code: 'clientOk1', settings: { order: { lastIncrementalLoadDate: '2025-12-01 00:00:00' } } },
+				{ code: 'clientFail', settings: { order: { lastIncrementalLoadDate: '2025-12-01 00:00:00' } } },
+				{ code: 'clientOk2', settings: { order: { lastIncrementalLoadDate: '2025-12-01 00:00:00' } } }
+			]);
+
+			ClientModel.prototype.update.withArgs(sinon.match.any, { code: 'clientFail' }).rejects(new Error('boom'));
+
+			await assert.rejects(
+				() => DataLakeLoad({ entity: 'order', mode: 'incremental' }),
+				/1 client\(s\) failed: clientFail/
+			);
+
+			sinon.assert.calledThrice(SqsEmitter.prototype.publishEvents);
+			sinon.assert.calledThrice(ClientModel.prototype.update);
 		});
 	});
 
@@ -238,11 +272,7 @@ describe('DataLakeLoadFunction', () => {
 				.returns({ entities: [{ name: 'order', initialLoad: { dateFrom: '2025-01-01 00:00:00' } }] });
 		});
 
-		afterEach(() => {
-			sinon.assert.notCalled(ClientModel.prototype.update);
-		});
-
-		it('Should send one message per day per client with correct from/to and mode initial', async () => {
+		it('Should send one message per day per client and persist initialLoad.dateFrom on each client', async () => {
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }, { code: 'client2' }]);
 
@@ -279,9 +309,17 @@ describe('DataLakeLoadFunction', () => {
 					to: day2End.toISOString()
 				}
 			}]);
+
+			sinon.assert.calledTwice(ClientModel.prototype.update);
+			sinon.assert.calledWithExactly(ClientModel.prototype.update, {
+				'settings.order.initialLoad.dateFrom': day1Start
+			}, { code: 'client1' });
+			sinon.assert.calledWithExactly(ClientModel.prototype.update, {
+				'settings.order.initialLoad.dateFrom': day1Start
+			}, { code: 'client2' });
 		});
 
-		it('Should execute initial load for client received in payload', async () => {
+		it('Should execute initial load for client received in payload and persist initialLoad.dateFrom', async () => {
 
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'customClient' }]);
 
@@ -318,6 +356,25 @@ describe('DataLakeLoadFunction', () => {
 					to: day2End.toISOString()
 				}
 			}]);
+
+			sinon.assert.calledOnceWithExactly(ClientModel.prototype.update, {
+				'settings.order.initialLoad.dateFrom': day1Start
+			}, { code: 'customClient' });
+		});
+
+		it('Should not persist initialLoad.dateFrom when publishEvents fails', async () => {
+
+			publishEventsStub.resolves({ failedCount: 1 });
+
+			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
+
+			await DataLakeLoad({
+				entity: 'order',
+				from: '2026-01-01 00:00:00',
+				to: '2026-01-02 23:59:59'
+			});
+
+			sinon.assert.notCalled(ClientModel.prototype.update);
 		});
 
 		it('Should send one message per day with correct from until now when to is not provided', async () => {
@@ -339,6 +396,8 @@ describe('DataLakeLoadFunction', () => {
 			});
 
 			const expectedMessages = [];
+			const firstDayStart = new Date(from);
+			firstDayStart.setHours(0, 0, 0, 0);
 
 			while(from <= fakeCurrentDate) {
 
@@ -360,6 +419,10 @@ describe('DataLakeLoadFunction', () => {
 			}
 
 			sinon.assert.calledOnceWithExactly(SqsEmitter.prototype.publishEvents, QUEUE_URL, expectedMessages);
+
+			sinon.assert.calledOnceWithExactly(ClientModel.prototype.update, {
+				'settings.order.initialLoad.dateFrom': firstDayStart
+			}, { code: 'client1' });
 		});
 
 		it('Should call publishEvents twice when range spans 51 days (batch of 50 then 1)', async () => {
@@ -406,6 +469,10 @@ describe('DataLakeLoadFunction', () => {
 			sinon.assert.calledTwice(SqsEmitter.prototype.publishEvents);
 			sinon.assert.calledWithExactly(SqsEmitter.prototype.publishEvents.firstCall, QUEUE_URL, expectedFirstBatch);
 			sinon.assert.calledWithExactly(SqsEmitter.prototype.publishEvents.secondCall, QUEUE_URL, expectedSecondBatch);
+
+			sinon.assert.calledOnceWithExactly(ClientModel.prototype.update, {
+				'settings.order.initialLoad.dateFrom': new Date(2026, 0, 1, 0, 0, 0, 0)
+			}, { code: 'client1' });
 		});
 
 		it('Should throw when from is missing', async () => {
@@ -418,6 +485,7 @@ describe('DataLakeLoadFunction', () => {
 			await assert.rejects(() => DataLakeLoad({ entity: 'order' }));
 
 			sinon.assert.notCalled(SqsEmitter.prototype.publishEvents);
+			sinon.assert.notCalled(ClientModel.prototype.update);
 		});
 
 		it('Should throw when from is greater than to (date from in payload)', async () => {
@@ -431,6 +499,8 @@ describe('DataLakeLoadFunction', () => {
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
 
 			await assert.rejects(() => DataLakeLoad({ entity: 'order', from: dateFrom.toISOString() }));
+
+			sinon.assert.notCalled(ClientModel.prototype.update);
 		});
 
 		it('Should throw when from is greater than to (date from in settings)', async () => {
@@ -444,6 +514,8 @@ describe('DataLakeLoadFunction', () => {
 			sinon.stub(ClientModel.prototype, 'get').resolves([{ code: 'client1' }]);
 
 			await assert.rejects(() => DataLakeLoad({ entity: 'order' }));
+
+			sinon.assert.notCalled(ClientModel.prototype.update);
 		});
 	});
 
